@@ -765,6 +765,12 @@ export class BolesaShipmentService implements OnModuleInit {
         const found = await this.client.findAwbsByMeta(auth, 'vendure_shipment_key', existing.shipmentKey);
         if (found[0]?.trackingNumber) {
             await this.adoptAwb(ctx, existing, found[0]);
+            await this.noteAwbAdopted(
+                ctx,
+                existing.orderId,
+                found[0].trackingNumber,
+                existing.labelAvailability ?? 'unavailable',
+            );
             return (await this.findByFulfillmentId(ctx, fulfillmentId))!;
         }
 
@@ -937,21 +943,35 @@ export class BolesaShipmentService implements OnModuleInit {
         // awaiting_lookup never POSTs /awbs — lookup only.
         const pre = await this.client.findAwbsByMeta(auth, 'vendure_shipment_key', gate.shipmentKey);
         if (pre[0]?.trackingNumber) {
-            return this.connection.withTransaction(ctx, async txCtx => {
+            const adopted = await this.connection.withTransaction(ctx, async txCtx => {
                 const shipment = await this.lockShipmentForFulfillment(txCtx, fulfillmentId);
                 if (!shipment) {
-                    return { ok: false };
+                    return { ok: false as const };
                 }
                 const again = decideCreateAwbGate(shipment);
                 if (again.kind === 'done') {
-                    return { ok: true, trackingNumber: again.trackingNumber };
+                    return { ok: true as const, trackingNumber: again.trackingNumber };
                 }
                 if (again.kind === 'terminal') {
-                    return { ok: false };
+                    return { ok: false as const };
                 }
                 await this.adoptAwb(txCtx, shipment, pre[0]);
-                return { ok: true, trackingNumber: pre[0].trackingNumber };
+                return {
+                    ok: true as const,
+                    trackingNumber: pre[0].trackingNumber,
+                    orderId: shipment.orderId,
+                    labelAvailability: shipment.labelAvailability,
+                };
             });
+            if (adopted.ok && adopted.trackingNumber && adopted.orderId != null) {
+                await this.noteAwbAdopted(
+                    ctx,
+                    adopted.orderId,
+                    adopted.trackingNumber,
+                    adopted.labelAvailability ?? 'unavailable',
+                );
+            }
+            return { ok: adopted.ok, trackingNumber: adopted.trackingNumber };
         }
 
         if (gate.kind === 'awaiting_lookup') {
@@ -1006,22 +1026,22 @@ export class BolesaShipmentService implements OnModuleInit {
 
         try {
             const result = await this.client.createAwb(auth, input, gate.idempotencyKey);
-            return this.connection.withTransaction(ctx, async txCtx => {
+            const committed = await this.connection.withTransaction(ctx, async txCtx => {
                 const shipment = await this.lockShipmentForFulfillment(txCtx, fulfillmentId);
                 if (!shipment) {
-                    return { ok: false };
+                    return { ok: false as const };
                 }
                 const again = decideCreateAwbGate(shipment);
                 if (again.kind === 'done') {
-                    return { ok: true, trackingNumber: again.trackingNumber };
+                    return { ok: true as const, trackingNumber: again.trackingNumber };
                 }
                 if (again.kind === 'terminal' || again.kind === 'awaiting_lookup') {
                     // cancel_requested / failed / already awaiting — do not overwrite with a late create
                     if (again.kind === 'awaiting_lookup' && result.status === 'queued') {
-                        return { ok: true };
+                        return { ok: true as const };
                     }
                     if (again.kind === 'terminal') {
-                        return { ok: false };
+                        return { ok: false as const };
                     }
                 }
                 if (result.status === 'queued') {
@@ -1031,15 +1051,29 @@ export class BolesaShipmentService implements OnModuleInit {
                     await this.patchFulfillment(txCtx, fulfillmentId, {
                         bolesaSyncStatus: 'awaiting_bolesa',
                     });
-                    return { ok: true };
+                    return { ok: true as const };
                 }
                 const awb = result.awbs[0];
                 if (!awb?.trackingNumber) {
                     throw new Error('Bolesa returned success without tracking_number');
                 }
                 await this.adoptAwb(txCtx, shipment, awb);
-                return { ok: true, trackingNumber: awb.trackingNumber };
+                return {
+                    ok: true as const,
+                    trackingNumber: awb.trackingNumber,
+                    orderId: shipment.orderId,
+                    labelAvailability: shipment.labelAvailability,
+                };
             });
+            if (committed.ok && committed.trackingNumber && committed.orderId != null) {
+                await this.noteAwbAdopted(
+                    ctx,
+                    committed.orderId,
+                    committed.trackingNumber,
+                    committed.labelAvailability ?? 'unavailable',
+                );
+            }
+            return { ok: committed.ok, trackingNumber: committed.trackingNumber };
         } catch (e: any) {
             if (e instanceof BolesaApiError) {
                 if (e.isRetryable) {
@@ -1055,6 +1089,49 @@ export class BolesaShipmentService implements OnModuleInit {
                     throw e;
                 }
                 if (e.isDefiniteFailure) {
+                    // Same Idempotency-Key with a changed body (or a prior orphan create):
+                    // heal by adopting an existing AWB keyed by vendure_shipment_key.
+                    if (e.code === 'idempotency_key_reused') {
+                        const existing = await this.client.findAwbsByMeta(
+                            auth,
+                            'vendure_shipment_key',
+                            gate.shipmentKey,
+                        );
+                        if (existing[0]?.trackingNumber) {
+                            const healed = await this.connection.withTransaction(ctx, async txCtx => {
+                                const shipment = await this.lockShipmentForFulfillment(
+                                    txCtx,
+                                    fulfillmentId,
+                                );
+                                if (!shipment) {
+                                    return { ok: false as const };
+                                }
+                                const again = decideCreateAwbGate(shipment);
+                                if (again.kind === 'done') {
+                                    return {
+                                        ok: true as const,
+                                        trackingNumber: again.trackingNumber,
+                                    };
+                                }
+                                await this.adoptAwb(txCtx, shipment, existing[0]);
+                                return {
+                                    ok: true as const,
+                                    trackingNumber: existing[0].trackingNumber,
+                                    orderId: shipment.orderId,
+                                    labelAvailability: shipment.labelAvailability,
+                                };
+                            });
+                            if (healed.ok && healed.trackingNumber && healed.orderId != null) {
+                                await this.noteAwbAdopted(
+                                    ctx,
+                                    healed.orderId,
+                                    healed.trackingNumber,
+                                    healed.labelAvailability ?? 'unavailable',
+                                );
+                            }
+                            return { ok: healed.ok, trackingNumber: healed.trackingNumber };
+                        }
+                    }
                     await this.connection.withTransaction(ctx, async txCtx => {
                         const shipment = await this.lockShipmentForFulfillment(txCtx, fulfillmentId);
                         if (!shipment) {
@@ -1067,15 +1144,27 @@ export class BolesaShipmentService implements OnModuleInit {
                         await this.patchFulfillment(txCtx, fulfillmentId, {
                             bolesaSyncStatus: 'failed',
                         });
-                        await this.historyService.createHistoryEntryForOrder({
-                            ctx: txCtx,
-                            orderId: order.id,
-                            type: HistoryEntryType.ORDER_NOTE,
-                            data: {
-                                note: `Bolesa AWB failed: ${e.code}: ${e.message}`,
-                            },
-                        });
                     });
+                    const orderExists = await this.connection.getRepository(ctx, Order).exists({
+                        where: { id: order.id },
+                    });
+                    if (orderExists) {
+                        try {
+                            await this.historyService.createHistoryEntryForOrder({
+                                ctx,
+                                orderId: order.id,
+                                type: HistoryEntryType.ORDER_NOTE,
+                                data: {
+                                    note: `Bolesa AWB failed: ${e.code}: ${e.message}`,
+                                },
+                            });
+                        } catch (histErr: any) {
+                            Logger.warn(
+                                `AWB failure history note skipped for order ${order.id}: ${histErr?.message}`,
+                                loggerCtx,
+                            );
+                        }
+                    }
                     return { ok: false };
                 }
             }
@@ -1339,6 +1428,12 @@ export class BolesaShipmentService implements OnModuleInit {
                         );
                         if (found[0]) {
                             await this.adoptAwb(ctx, shipment, found[0]);
+                            await this.noteAwbAdopted(
+                                ctx,
+                                shipment.orderId,
+                                found[0].trackingNumber,
+                                shipment.labelAvailability ?? 'unavailable',
+                            );
                             checked++;
                             continue;
                         }
@@ -1532,15 +1627,39 @@ export class BolesaShipmentService implements OnModuleInit {
             };
             await this.connection.getRepository(ctx, Fulfillment).save(fulfillment);
         }
+        // Intentionally no HistoryService call here: a missing Order FK aborts the
+        // surrounding Postgres transaction and would roll back the adopt after
+        // Partner already created the AWB. Callers use noteAwbAdopted() after commit.
+    }
 
-        await this.historyService.createHistoryEntryForOrder({
-            ctx,
-            orderId: shipment.orderId,
-            type: HistoryEntryType.ORDER_NOTE,
-            data: {
-                note: `Bolesa AWB created: ${awb.trackingNumber} (label: ${shipment.labelAvailability})`,
-            },
+    /** Best-effort order note after a committed AWB adopt (never inside adopt txn). */
+    private async noteAwbAdopted(
+        ctx: RequestContext,
+        orderId: ID,
+        trackingNumber: string,
+        labelAvailability: string,
+    ): Promise<void> {
+        const orderExists = await this.connection.getRepository(ctx, Order).exists({
+            where: { id: orderId },
         });
+        if (!orderExists) {
+            return;
+        }
+        try {
+            await this.historyService.createHistoryEntryForOrder({
+                ctx,
+                orderId,
+                type: HistoryEntryType.ORDER_NOTE,
+                data: {
+                    note: `Bolesa AWB created: ${trackingNumber} (label: ${labelAvailability})`,
+                },
+            });
+        } catch (e: any) {
+            Logger.warn(
+                `AWB ${trackingNumber} adopted; history note failed for order ${orderId}: ${e?.message}`,
+                loggerCtx,
+            );
+        }
     }
 
     private buildCreateInput(
@@ -1584,6 +1703,9 @@ export class BolesaShipmentService implements OnModuleInit {
                 address_line: String(shipper.address_line ?? ''),
                 email: shipper.email ? String(shipper.email) : undefined,
                 company_name: shipper.company_name ? String(shipper.company_name) : undefined,
+                sa_short_address: shipper.sa_short_address
+                    ? String(shipper.sa_short_address)
+                    : undefined,
             },
             consignee: {
                 name: order.shippingAddress?.fullName ?? 'Customer',
@@ -1595,6 +1717,9 @@ export class BolesaShipmentService implements OnModuleInit {
                         .filter(Boolean)
                         .join(', ') || 'Address',
                 email: order.customer?.emailAddress,
+                sa_short_address: (order.shippingAddress as any)?.customFields?.bolesaSaShortAddress
+                    ? String((order.shippingAddress as any).customFields.bolesaSaShortAddress)
+                    : undefined,
             },
             description: `Order ${order.code}`,
             meta: {

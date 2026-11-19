@@ -46,6 +46,41 @@ describe('BolesaClient', () => {
         assert.equal(services[0].codCollectionFee, 5);
     });
 
+    it('maps AWB list when Partner returns a bare data array', async () => {
+        originalFetch = globalThis.fetch;
+        globalThis.fetch = mockFetch(200, {
+            success: true,
+            data: [{ tracking_number: 'TN-1', status_code: 'READY FOR SHIPMENT' }],
+        });
+        const client = new BolesaClient({ apiBaseUrl: auth.apiBaseUrl, encryptionSecret: 'x' });
+        const awbs = await client.findAwbsByMeta(auth, 'vendure_shipment_key', 'k1');
+        assert.equal(awbs.length, 1);
+        assert.equal(awbs[0].trackingNumber, 'TN-1');
+    });
+
+    it('maps Partner geo cities that expose name_en / resolution_hash', async () => {
+        originalFetch = globalThis.fetch;
+        globalThis.fetch = mockFetch(200, {
+            success: true,
+            data: {
+                cities: [
+                    {
+                        id: 33874,
+                        name_en: 'ElHay 06 (Nasr City)',
+                        name_ar: 'الحى السادس',
+                        ancestors_label_en: 'ElHay 06 (Nasr City), Nasr City, Cairo',
+                        resolution_hash: '4c2279956e07a68e2eacaeb97382d3e5',
+                    },
+                ],
+            },
+        });
+        const client = new BolesaClient({ apiBaseUrl: auth.apiBaseUrl, encryptionSecret: 'x' });
+        const cities = await client.searchCities(auth, 'Nasr');
+        assert.equal(cities.length, 1);
+        assert.equal(cities[0].name, 'ElHay 06 (Nasr City)');
+        assert.equal(cities[0].resolutionHash, '4c2279956e07a68e2eacaeb97382d3e5');
+    });
+
     it('throws typed error on 422 definite failure', async () => {
         originalFetch = globalThis.fetch;
         globalThis.fetch = mockFetch(422, {

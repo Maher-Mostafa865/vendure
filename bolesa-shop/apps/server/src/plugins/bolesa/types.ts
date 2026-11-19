@@ -93,6 +93,8 @@ export interface BolesaInlineAddress {
     email?: string;
     company_name?: string;
     zip_code?: string;
+    /** Required by Partner API when country_code is SA (max 10). */
+    sa_short_address?: string;
 }
 
 export interface BolesaAwb {

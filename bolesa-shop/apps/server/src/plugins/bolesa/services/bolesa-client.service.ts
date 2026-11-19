@@ -47,13 +47,19 @@ export class BolesaClient {
     async searchCities(auth: BolesaRequestAuth, query: string): Promise<BolesaCityResult[]> {
         const data = await this.request<any>(auth, 'POST', '/geo/cities/search', { query });
         const rows = Array.isArray(data) ? data : (data?.cities ?? data?.items ?? []);
-        return (rows as any[]).map(row => ({
-            name: String(row.name ?? row.city_name ?? ''),
-            resolutionHash: String(row.resolution_hash ?? row.resolutionHash ?? ''),
-            countryCode: row.country_code ?? row.countryCode,
-            governorate: row.governorate ?? row.admin1_name,
-            district: row.district ?? row.admin2_name,
-        })).filter(c => c.name && c.resolutionHash);
+        return (rows as any[]).map(row => {
+            const name = String(
+                row.name ?? row.name_en ?? row.name_ar ?? row.city_name ?? '',
+            );
+            const ancestors = String(row.ancestors_label_en ?? row.ancestors_label_ar ?? '');
+            return {
+                name,
+                resolutionHash: String(row.resolution_hash ?? row.resolutionHash ?? ''),
+                countryCode: row.country_code ?? row.countryCode,
+                governorate: row.governorate ?? row.admin1_name ?? ancestors.split(',')[1]?.trim(),
+                district: row.district ?? row.admin2_name ?? ancestors.split(',')[0]?.trim(),
+            };
+        }).filter(c => c.name && c.resolutionHash);
     }
 
     async serviceOptions(
@@ -129,8 +135,11 @@ export class BolesaClient {
     ): Promise<BolesaAwb[]> {
         const qs = new URLSearchParams({ [`meta[${metaKey}]`]: metaValue });
         const data = await this.request<any>(auth, 'GET', `/awbs?${qs.toString()}`);
-        const items = data?.items ?? data?.awbs ?? data?.data ?? [];
-        return (Array.isArray(items) ? items : []).map(mapAwb);
+        // Partner may return the page as a bare array under `data`, or `{ items|awbs }`.
+        const items = Array.isArray(data)
+            ? data
+            : (data?.items ?? data?.awbs ?? data?.data ?? []);
+        return (Array.isArray(items) ? items : []).map(mapAwb).filter(a => a.trackingNumber);
     }
 
     async cancelAwb(
