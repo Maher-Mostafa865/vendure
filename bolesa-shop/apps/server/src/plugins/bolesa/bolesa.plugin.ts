@@ -84,6 +84,10 @@ export class BolesaPlugin implements OnApplicationBootstrap {
             rateCacheTtlMs: 600_000,
             defaultCountryCode: 'EG',
             reconcileSchedule: '*/15 * * * *',
+            reconcileBatchSize: 100,
+            reconcileMaxBatches: 10,
+            citySearchRateLimit: { maxRequests: 30, windowMs: 60_000 },
+            stuckShipmentThresholdMs: 30 * 60_000,
             ...options,
         };
         return BolesaPlugin;

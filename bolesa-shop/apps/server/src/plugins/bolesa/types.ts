@@ -14,6 +14,14 @@ export interface BolesaPluginOptions {
     defaultCountryCode?: string;
     /** How often reconciliation runs (cron). Default every 15 minutes. */
     reconcileSchedule?: string;
+    /** Per-channel open-shipment page size during reconcile. Default 100. */
+    reconcileBatchSize?: number;
+    /** Max reconcile pages per channel per run. Default 10 (≤1000 rows/channel). */
+    reconcileMaxBatches?: number;
+    /** Shop city-search rate limit (per channel). Default 30 / 60s. */
+    citySearchRateLimit?: { maxRequests: number; windowMs: number };
+    /** Age (ms) after which requested/cancel_requested count as stuck in ops health. Default 30m. */
+    stuckShipmentThresholdMs?: number;
 }
 
 export type BolesaShipmentSyncStatus =
@@ -24,6 +32,8 @@ export type BolesaShipmentSyncStatus =
     /** JobQueue create retries exhausted — needs Admin retry (not auto-recovered). */
     | 'retry_exhausted'
     | 'cancel_requested'
+    /** JobQueue cancel retries exhausted — needs Admin cancel retry (not auto-recovered). */
+    | 'cancel_retry_exhausted'
     | 'canceled'
     | 'abandoned';
 

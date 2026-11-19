@@ -17,8 +17,9 @@ export const bolesaReconcileTask = new ScheduledTask({
             const result = await shipmentService.reconcileOpenShipments();
             Logger.debug(
                 `Bolesa reconcile: createRecovered=${result.recovered}/${result.recoveryScanned} ` +
-                    `exhausted=${result.markedExhausted} cancelRecovered=${result.cancelRecovered}/${result.cancelRecoveryScanned} ` +
-                    `checked=${result.checked} open`,
+                    `exhausted=${result.markedExhausted} cancelExhausted=${result.cancelMarkedExhausted} ` +
+                    `cancelRecovered=${result.cancelRecovered}/${result.cancelRecoveryScanned} ` +
+                    `checked=${result.checked} batches=${result.batches} durationMs=${result.durationMs}`,
                 loggerCtx,
             );
             return result;

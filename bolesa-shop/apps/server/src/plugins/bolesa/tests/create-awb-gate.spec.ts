@@ -45,9 +45,14 @@ describe('decideCreateAwbGate', () => {
         }
     });
 
-    it('created without tracking → proceed (heal via pre-check)', () => {
+    it('created without tracking → awaiting_lookup (never blind POST /awbs)', () => {
         const d = decideCreateAwbGate({ ...base, syncStatus: 'created', trackingNumber: null });
-        assert.equal(d.kind, 'proceed');
+        assert.equal(d.kind, 'awaiting_lookup');
+    });
+
+    it('cancel_retry_exhausted → terminal', () => {
+        const d = decideCreateAwbGate({ ...base, syncStatus: 'cancel_retry_exhausted' });
+        assert.equal(d.kind, 'terminal');
     });
 
     it('failed → terminal (Admin retry must reset to requested first)', () => {

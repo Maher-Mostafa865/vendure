@@ -1,4 +1,4 @@
-import { Injectable, OnModuleInit } from '@nestjs/common';
+import { Inject, Injectable, OnModuleInit } from '@nestjs/common';
 import { HistoryEntryType, JobState } from '@vendure/common/lib/generated-types';
 import {
     ChannelService,
@@ -20,11 +20,12 @@ import {
     TransactionalConnection,
     UserInputError,
 } from '@vendure/core';
-import { In } from 'typeorm';
+import { In, LessThan } from 'typeorm';
 
 import {
     BOLESA_COD_HANDLER_CODE,
     BOLESA_FULFILLMENT_HANDLER_CODE,
+    BOLESA_PLUGIN_OPTIONS,
     CANCEL_AWB_QUEUE,
     CREATE_AWB_QUEUE,
     loggerCtx,
@@ -33,6 +34,7 @@ import { BolesaShipment } from '../entities/bolesa-shipment.entity';
 import {
     ApplyStatusJobData,
     BolesaCreateAwbInput,
+    BolesaPluginOptions,
     CancelAwbJobData,
     CreateAwbJobData,
     PaymentPreference,
@@ -40,6 +42,10 @@ import {
 } from '../types';
 import { decideCreateAwbGate, isValidPersistedOrderId } from '../util/create-awb-gate';
 import { minorToMajor } from '../util/money';
+import {
+    BolesaOpsSnapshot,
+    formatOpsMetricLine,
+} from '../util/ops-metrics';
 import {
     ACTIVE_CANCEL_JOB_STATES,
     ACTIVE_CREATE_JOB_STATES,
@@ -77,6 +83,7 @@ export class BolesaShipmentService implements OnModuleInit {
         private orderService: OrderService,
         private historyService: HistoryService,
         private requestContextService: RequestContextService,
+        @Inject(BOLESA_PLUGIN_OPTIONS) private options: BolesaPluginOptions,
     ) {}
 
     async onModuleInit() {
@@ -100,7 +107,21 @@ export class BolesaShipmentService implements OnModuleInit {
         });
         this.cancelQueue = await this.jobQueueService.createQueue({
             name: CANCEL_AWB_QUEUE,
-            process: async job => this.processCancelAwb(job.data),
+            process: async job => {
+                try {
+                    return await this.processCancelAwb(job.data);
+                } catch (e) {
+                    if (isLastJobAttempt(job)) {
+                        await this.markCancelRetryExhausted(job.data).catch(err =>
+                            Logger.error(
+                                `markCancelRetryExhausted: ${(err as Error)?.message}`,
+                                loggerCtx,
+                            ),
+                        );
+                    }
+                    throw e;
+                }
+            },
         });
 
         this.eventBus.ofType(FulfillmentEvent).subscribe(event => {
@@ -543,8 +564,34 @@ export class BolesaShipmentService implements OnModuleInit {
     }
 
     /**
+     * Mark outbox as `cancel_retry_exhausted` after JobQueue cancel attempts are spent.
+     * Admin `retryCancelShipment` restores `cancel_requested` and re-enqueues (same Partner cancel key).
+     */
+    async markCancelRetryExhausted(data: CancelAwbJobData): Promise<void> {
+        const ctx = await this.ctxForChannel(data.channelId);
+        await this.connection.withTransaction(ctx, async txCtx => {
+            const shipment = await this.lockShipmentForFulfillment(txCtx, data.fulfillmentId);
+            if (!shipment) {
+                return;
+            }
+            if (shipment.syncStatus !== 'cancel_requested') {
+                return;
+            }
+            shipment.syncStatus = 'cancel_retry_exhausted';
+            shipment.lastError =
+                shipment.lastError ??
+                `Cancel AWB JobQueue retries exhausted (TN=${data.trackingNumber})`;
+            shipment.lastErrorAt = new Date();
+            await this.connection.getRepository(txCtx, BolesaShipment).save(shipment);
+            await this.patchFulfillment(txCtx, data.fulfillmentId, {
+                bolesaSyncStatus: 'cancel_retry_exhausted',
+            });
+        });
+    }
+
+    /**
      * Recover `cancel_requested` rows missing an active cancel job (crash between save and enqueue).
-     * Does not cancel unrelated states. Does not call Partner API.
+     * Exhausted FAILED cancel jobs → `cancel_retry_exhausted` (no auto re-enqueue).
      */
     async recoverOrphanedCancelRequestedShipments(): Promise<{
         scanned: number;
@@ -552,6 +599,7 @@ export class BolesaShipmentService implements OnModuleInit {
         skippedActive: number;
         skippedGrace: number;
         skippedExhausted: number;
+        markedExhausted: number;
     }> {
         const baseCtx = await this.requestContextService.create({ apiType: 'admin' });
         const channels = await this.channelService.findAll(baseCtx);
@@ -560,6 +608,7 @@ export class BolesaShipmentService implements OnModuleInit {
         let skippedActive = 0;
         let skippedGrace = 0;
         let skippedExhausted = 0;
+        let markedExhausted = 0;
 
         for (const channel of channels.items) {
             const ctx = await this.requestContextService.create({
@@ -576,11 +625,35 @@ export class BolesaShipmentService implements OnModuleInit {
             });
             for (const shipment of orphans) {
                 scanned++;
+                if (!shipment.trackingNumber) {
+                    continue;
+                }
+                const identity = {
+                    fulfillmentId: shipment.fulfillmentId,
+                    channelId: shipment.channelId,
+                    trackingNumber: shipment.trackingNumber,
+                };
+                if (await this.hasActiveCancelAwbJob(identity)) {
+                    skippedActive++;
+                    continue;
+                }
+                if (await this.hasExhaustedCancelAwbJob(identity)) {
+                    await this.markCancelRetryExhausted({
+                        ...identity,
+                        attempt: shipment.attempt,
+                    });
+                    markedExhausted++;
+                    Logger.warn(
+                        `Cancel retries exhausted for fulfillment ${shipment.fulfillmentId}; marked cancel_retry_exhausted`,
+                        loggerCtx,
+                    );
+                    continue;
+                }
                 const decision = await this.ensureCancelAwbJobEnqueued(shipment);
                 if (decision === 'enqueue') {
                     enqueued++;
                     Logger.info(
-                        `Recovered orphaned cancel job for fulfillment ${shipment.fulfillmentId} TN=${shipment.trackingNumber}`,
+                        `Recovered orphaned cancel job for fulfillment ${shipment.fulfillmentId}`,
                         loggerCtx,
                     );
                 } else if (decision === 'skip_active_job') {
@@ -593,7 +666,7 @@ export class BolesaShipmentService implements OnModuleInit {
             }
         }
 
-        return { scanned, enqueued, skippedActive, skippedGrace, skippedExhausted };
+        return { scanned, enqueued, skippedActive, skippedGrace, skippedExhausted, markedExhausted };
     }
 
     private async persistQuoteOnOrderPlaced(event: OrderPlacedEvent) {
@@ -662,33 +735,122 @@ export class BolesaShipmentService implements OnModuleInit {
         }
     }
 
+    /**
+     * Admin create retry. Attempt/idempotency bump happens at most once under FOR UPDATE.
+     * Enqueue goes through `ensureCreateAwbJobEnqueued` (active-job dedupe).
+     */
     async retryShipment(ctx: RequestContext, fulfillmentId: ID): Promise<BolesaShipment> {
-        const shipment = await this.findByFulfillmentId(ctx, fulfillmentId);
-        if (!shipment) {
+        const existing = await this.findByFulfillmentId(ctx, fulfillmentId);
+        if (!existing) {
             throw new UserInputError(`No Bolesa shipment for fulfillment ${fulfillmentId}`);
         }
-        if (shipment.syncStatus === 'created' && shipment.trackingNumber) {
-            return shipment;
+        if (existing.syncStatus === 'created' && existing.trackingNumber) {
+            return existing;
         }
-        // Pre-check before bumping attempt
+        const blocked = [
+            'canceled',
+            'abandoned',
+            'cancel_requested',
+            'cancel_retry_exhausted',
+        ];
+        if (blocked.includes(String(existing.syncStatus))) {
+            throw new UserInputError(
+                `Cannot retry create while syncStatus=${existing.syncStatus}. Use cancel retry or abandon.`,
+            );
+        }
+
+        // Partner pre-check outside the lock
         const conn = await this.connectionService.requireActive(ctx);
         const auth = this.connectionService.authFor(conn);
-        const existing = await this.client.findAwbsByMeta(auth, 'vendure_shipment_key', shipment.shipmentKey);
-        if (existing[0]?.trackingNumber) {
-            await this.adoptAwb(ctx, shipment, existing[0]);
+        const found = await this.client.findAwbsByMeta(auth, 'vendure_shipment_key', existing.shipmentKey);
+        if (found[0]?.trackingNumber) {
+            await this.adoptAwb(ctx, existing, found[0]);
             return (await this.findByFulfillmentId(ctx, fulfillmentId))!;
         }
-        // Admin retry: new attempt + idempotency key; restores eligibility from failed/retry_exhausted.
-        shipment.attempt += 1;
-        shipment.idempotencyKey = `${shipment.shipmentKey}-a${shipment.attempt}`;
-        shipment.syncStatus = 'requested';
-        shipment.lastError = null;
-        await this.connection.getRepository(ctx, BolesaShipment).save(shipment);
-        await this.createQueue.add(
-            { fulfillmentId, channelId: ctx.channelId, attempt: shipment.attempt },
-            { retries: CREATE_AWB_JOB_RETRIES },
-        );
-        return shipment;
+
+        const updated = await this.connection.withTransaction(ctx, async txCtx => {
+            const locked = await this.lockShipmentForFulfillment(txCtx, fulfillmentId);
+            if (!locked) {
+                throw new UserInputError(`No Bolesa shipment for fulfillment ${fulfillmentId}`);
+            }
+            if (locked.syncStatus === 'created' && locked.trackingNumber) {
+                return locked;
+            }
+            if (blocked.includes(String(locked.syncStatus))) {
+                throw new UserInputError(
+                    `Cannot retry create while syncStatus=${locked.syncStatus}`,
+                );
+            }
+
+            // Already requested with an in-flight job for this attempt — idempotent no-op.
+            if (locked.syncStatus === 'requested') {
+                if (await this.hasActiveCreateAwbJob(locked)) {
+                    return locked;
+                }
+                // Nudge orphan without bumping attempt/idempotency.
+                return locked;
+            }
+
+            // failed / retry_exhausted / awaiting_bolesa / created-without-TN → new attempt once
+            locked.attempt += 1;
+            locked.idempotencyKey = `${locked.shipmentKey}-a${locked.attempt}`;
+            locked.syncStatus = 'requested';
+            locked.lastError = null;
+            await this.connection.getRepository(txCtx, BolesaShipment).save(locked);
+            await this.patchFulfillment(txCtx, fulfillmentId, { bolesaSyncStatus: 'requested' });
+            return locked;
+        });
+
+        await this.ensureCreateAwbJobEnqueued(updated, { ignoreGracePeriod: true });
+        return (await this.findByFulfillmentId(ctx, fulfillmentId))!;
+    }
+
+    /**
+     * Admin cancel retry after `cancel_retry_exhausted` (or stuck cancel_requested).
+     * Does not bump create attempt; Partner cancel key remains attempt-scoped (idempotent).
+     */
+    async retryCancelShipment(ctx: RequestContext, fulfillmentId: ID): Promise<BolesaShipment> {
+        const updated = await this.connection.withTransaction(ctx, async txCtx => {
+            const locked = await this.lockShipmentForFulfillment(txCtx, fulfillmentId);
+            if (!locked?.trackingNumber) {
+                throw new UserInputError('Shipment has no tracking number yet');
+            }
+            if (locked.syncStatus === 'canceled') {
+                return locked;
+            }
+            if (
+                locked.syncStatus !== 'cancel_retry_exhausted' &&
+                locked.syncStatus !== 'cancel_requested'
+            ) {
+                throw new UserInputError(
+                    `Cannot retry cancel while syncStatus=${locked.syncStatus}`,
+                );
+            }
+            if (locked.syncStatus === 'cancel_requested') {
+                if (
+                    await this.hasActiveCancelAwbJob({
+                        fulfillmentId: locked.fulfillmentId,
+                        channelId: locked.channelId,
+                        trackingNumber: locked.trackingNumber,
+                    })
+                ) {
+                    return locked;
+                }
+            }
+            locked.syncStatus = 'cancel_requested';
+            locked.lastError = null;
+            await this.connection.getRepository(txCtx, BolesaShipment).save(locked);
+            await this.patchFulfillment(txCtx, fulfillmentId, {
+                bolesaSyncStatus: 'cancel_requested',
+            });
+            return locked;
+        });
+
+        await this.ensureCancelAwbJobEnqueued(updated, {
+            ignoreGracePeriod: true,
+            ignoreExhausted: true,
+        });
+        return (await this.findByFulfillmentId(ctx, fulfillmentId))!;
     }
 
     async abandonShipment(ctx: RequestContext, fulfillmentId: ID): Promise<Fulfillment> {
@@ -1116,14 +1278,22 @@ export class BolesaShipmentService implements OnModuleInit {
         cancelRecovered: number;
         cancelRecoveryScanned: number;
         markedExhausted: number;
+        cancelMarkedExhausted: number;
+        durationMs: number;
+        batches: number;
     }> {
+        const started = Date.now();
         // Outbox recovery does not call Partner API — run even when connection is missing.
         const recovery = await this.recoverOrphanedRequestedShipments();
         const cancelRecovery = await this.recoverOrphanedCancelRequestedShipments();
 
+        const batchSize = this.options.reconcileBatchSize ?? 100;
+        const maxBatches = this.options.reconcileMaxBatches ?? 10;
+
         const baseCtx = await this.requestContextService.create({ apiType: 'admin' });
         const channels = await this.channelService.findAll(baseCtx);
         let checked = 0;
+        let batches = 0;
         for (const channel of channels.items) {
             const ctx = await this.requestContextService.create({
                 apiType: 'admin',
@@ -1135,43 +1305,182 @@ export class BolesaShipmentService implements OnModuleInit {
             } catch {
                 continue;
             }
-            const open = await this.connection.getRepository(ctx, BolesaShipment).find({
-                where: {
-                    channelId: channel.id,
-                    syncStatus: In(['created', 'awaiting_bolesa', 'cancel_requested']),
-                },
-                take: 100,
-            });
-            for (const shipment of open) {
-                if (!shipment.trackingNumber && shipment.syncStatus === 'awaiting_bolesa') {
-                    const found = await this.client.findAwbsByMeta(
-                        this.connectionService.authFor(conn),
-                        'vendure_shipment_key',
-                        shipment.shipmentKey,
-                    );
-                    if (found[0]) {
-                        await this.adoptAwb(ctx, shipment, found[0]);
+            let skip = 0;
+            for (let page = 0; page < maxBatches; page++) {
+                const open = await this.connection.getRepository(ctx, BolesaShipment).find({
+                    where: {
+                        channelId: channel.id,
+                        syncStatus: In([
+                            'created',
+                            'awaiting_bolesa',
+                            'cancel_requested',
+                            'cancel_retry_exhausted',
+                        ]),
+                    },
+                    order: { updatedAt: 'ASC' },
+                    take: batchSize,
+                    skip,
+                });
+                if (!open.length) {
+                    break;
+                }
+                batches++;
+                skip += open.length;
+                for (const shipment of open) {
+                    if (
+                        !shipment.trackingNumber &&
+                        (shipment.syncStatus === 'awaiting_bolesa' ||
+                            (shipment.syncStatus === 'created' && !shipment.trackingNumber))
+                    ) {
+                        const found = await this.client.findAwbsByMeta(
+                            this.connectionService.authFor(conn),
+                            'vendure_shipment_key',
+                            shipment.shipmentKey,
+                        );
+                        if (found[0]) {
+                            await this.adoptAwb(ctx, shipment, found[0]);
+                            checked++;
+                            continue;
+                        }
+                    }
+                    if (
+                        shipment.trackingNumber &&
+                        shipment.syncStatus !== 'cancel_retry_exhausted' &&
+                        !isTerminalBolesaStatus(shipment.statusCode)
+                    ) {
+                        await this.applyObservedStatus({
+                            channelId: channel.id,
+                            trackingNumber: shipment.trackingNumber,
+                        });
                         checked++;
-                        continue;
                     }
                 }
-                if (shipment.trackingNumber && !isTerminalBolesaStatus(shipment.statusCode)) {
-                    await this.applyObservedStatus({
-                        channelId: channel.id,
-                        trackingNumber: shipment.trackingNumber,
-                    });
-                    checked++;
+                if (open.length < batchSize) {
+                    break;
                 }
             }
         }
-        return {
+
+        const durationMs = Date.now() - started;
+        const result = {
             checked,
             recovered: recovery.enqueued,
             recoveryScanned: recovery.scanned,
             cancelRecovered: cancelRecovery.enqueued,
             cancelRecoveryScanned: cancelRecovery.scanned,
             markedExhausted: recovery.markedExhausted,
+            cancelMarkedExhausted: cancelRecovery.markedExhausted,
+            durationMs,
+            batches,
         };
+        Logger.info(
+            formatOpsMetricLine('reconcile', {
+                durationMs,
+                checked,
+                recovered: result.recovered,
+                cancelRecovered: result.cancelRecovered,
+                markedExhausted: result.markedExhausted,
+                cancelMarkedExhausted: result.cancelMarkedExhausted,
+                batches,
+            }),
+            loggerCtx,
+        );
+        return result;
+    }
+
+    /**
+     * Ops health snapshot for Admin monitoring. No tokens, addresses, or customer PII.
+     */
+    async getOpsHealth(ctx: RequestContext): Promise<BolesaOpsSnapshot> {
+        const stuckThresholdMs = this.options.stuckShipmentThresholdMs ?? 30 * 60_000;
+        const cutoff = new Date(Date.now() - stuckThresholdMs);
+        const channelId = ctx.channelId;
+
+        const statusRows: Array<{ syncStatus: string; count: string }> =
+            await this.connection.rawConnection.query(
+                `SELECT "syncStatus", count(*)::text AS count
+                 FROM bolesa_shipment
+                 WHERE "channelId" = $1
+                 GROUP BY "syncStatus"`,
+                [channelId],
+            );
+        const bySyncStatus: Record<string, number> = {};
+        for (const row of statusRows) {
+            bySyncStatus[row.syncStatus] = Number(row.count);
+        }
+
+        const stuckRequested = await this.connection.getRepository(ctx, BolesaShipment).count({
+            where: { channelId, syncStatus: 'requested', updatedAt: LessThan(cutoff) },
+        });
+        const stuckCancelRequested = await this.connection.getRepository(ctx, BolesaShipment).count({
+            where: { channelId, syncStatus: 'cancel_requested', updatedAt: LessThan(cutoff) },
+        });
+
+        const queueStats = async (queueName: string) => {
+            const active: Array<{ count: string }> = await this.connection.rawConnection.query(
+                `SELECT count(*)::text AS count FROM job_record
+                 WHERE "queueName" = $1 AND state = ANY($2::text[]) AND "isSettled" = false`,
+                [queueName, [...ACTIVE_CREATE_JOB_STATES]],
+            );
+            const failed: Array<{ count: string }> = await this.connection.rawConnection.query(
+                `SELECT count(*)::text AS count FROM job_record
+                 WHERE "queueName" = $1 AND state = $2`,
+                [queueName, JobState.FAILED],
+            );
+            return {
+                queueName,
+                active: Number(active[0]?.count ?? 0),
+                failedUnsettledLike: Number(failed[0]?.count ?? 0),
+            };
+        };
+
+        let lastPartnerVerifiedAt: string | null = null;
+        try {
+            const conn = await this.connectionService.getForChannel(ctx);
+            lastPartnerVerifiedAt = conn?.lastVerifiedAt
+                ? new Date(conn.lastVerifiedAt).toISOString()
+                : null;
+        } catch {
+            lastPartnerVerifiedAt = null;
+        }
+
+        const snapshot: BolesaOpsSnapshot = {
+            generatedAt: new Date().toISOString(),
+            stuckThresholdMs,
+            channels: [
+                {
+                    channelId: String(channelId),
+                    bySyncStatus,
+                    stuckRequested,
+                    stuckCancelRequested,
+                    failed: bySyncStatus.failed ?? 0,
+                    retryExhausted: bySyncStatus.retry_exhausted ?? 0,
+                    cancelRetryExhausted: bySyncStatus.cancel_retry_exhausted ?? 0,
+                },
+            ],
+            queues: [await queueStats(CREATE_AWB_QUEUE), await queueStats(CANCEL_AWB_QUEUE)],
+            lastPartnerVerifiedAt,
+            notes: [
+                'Counts only; no shipment/customer PII.',
+                'Alert when stuckRequested/stuckCancelRequested/retryExhausted/cancelRetryExhausted grow.',
+                'lastPartnerVerifiedAt comes from connection test/verify — not every Partner call.',
+            ],
+        };
+
+        Logger.info(
+            formatOpsMetricLine('ops_health', {
+                channelId: String(channelId),
+                stuckRequested,
+                stuckCancelRequested,
+                failed: snapshot.channels[0].failed,
+                retryExhausted: snapshot.channels[0].retryExhausted,
+                cancelRetryExhausted: snapshot.channels[0].cancelRetryExhausted,
+                createActive: snapshot.queues[0]?.active,
+                cancelActive: snapshot.queues[1]?.active,
+            }),
+            loggerCtx,
+        );
+        return snapshot;
     }
 
     private async adoptAwb(ctx: RequestContext, shipment: BolesaShipment, awb: {

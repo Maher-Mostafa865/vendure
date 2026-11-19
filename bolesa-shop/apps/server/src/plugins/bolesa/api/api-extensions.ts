@@ -49,6 +49,31 @@ export const adminApiExtensions = gql`
         totalItems: Int!
     }
 
+    type BolesaQueueHealth {
+        queueName: String!
+        active: Int!
+        failedUnsettledLike: Int!
+    }
+
+    type BolesaChannelHealth {
+        channelId: ID!
+        bySyncStatus: JSON!
+        stuckRequested: Int!
+        stuckCancelRequested: Int!
+        failed: Int!
+        retryExhausted: Int!
+        cancelRetryExhausted: Int!
+    }
+
+    type BolesaOpsHealth {
+        generatedAt: DateTime!
+        stuckThresholdMs: Int!
+        channels: [BolesaChannelHealth!]!
+        queues: [BolesaQueueHealth!]!
+        lastPartnerVerifiedAt: DateTime
+        notes: [String!]!
+    }
+
     input UpdateBolesaConnectionInput {
         apiBaseUrl: String
         token: String
@@ -66,12 +91,14 @@ export const adminApiExtensions = gql`
         bolesaConnection: BolesaConnection
         bolesaShipments(syncStatus: String, take: Int, skip: Int): BolesaShipmentList!
         bolesaShipment(fulfillmentId: ID!): BolesaShipment
+        bolesaOpsHealth: BolesaOpsHealth!
     }
 
     extend type Mutation {
         updateBolesaConnection(input: UpdateBolesaConnectionInput!): BolesaConnection!
         testBolesaConnection: BolesaConnectionTestResult!
         bolesaRetryShipment(fulfillmentId: ID!): BolesaShipment!
+        bolesaRetryCancelShipment(fulfillmentId: ID!): BolesaShipment!
         bolesaCancelShipment(fulfillmentId: ID!): BolesaShipment!
         bolesaAbandonShipment(fulfillmentId: ID!): Boolean!
     }

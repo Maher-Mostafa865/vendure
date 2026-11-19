@@ -34,6 +34,12 @@ export class BolesaAdminResolver {
         return this.shipmentService.findByFulfillmentId(ctx, args.fulfillmentId);
     }
 
+    @Query()
+    @Allow(bolesaShipmentPermission.Read)
+    async bolesaOpsHealth(@Ctx() ctx: RequestContext) {
+        return this.shipmentService.getOpsHealth(ctx);
+    }
+
     @Transaction()
     @Mutation()
     @Allow(bolesaConnectionPermission.Write)
@@ -55,6 +61,12 @@ export class BolesaAdminResolver {
     @Allow(bolesaShipmentPermission.Write)
     async bolesaRetryShipment(@Ctx() ctx: RequestContext, @Args() args: { fulfillmentId: string }) {
         return this.shipmentService.retryShipment(ctx, args.fulfillmentId);
+    }
+
+    @Mutation()
+    @Allow(bolesaShipmentPermission.Write)
+    async bolesaRetryCancelShipment(@Ctx() ctx: RequestContext, @Args() args: { fulfillmentId: string }) {
+        return this.shipmentService.retryCancelShipment(ctx, args.fulfillmentId);
     }
 
     @Mutation()

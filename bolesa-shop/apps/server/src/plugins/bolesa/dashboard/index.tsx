@@ -242,6 +242,13 @@ function ShipmentCard({
                         Cancel Bolesa shipment
                     </Button>
                 )}
+                {data?.trackingNumber &&
+                    (data?.syncStatus === 'cancel_retry_exhausted' ||
+                        data?.syncStatus === 'cancel_requested') && (
+                    <Button type="button" size="sm" variant="secondary" onClick={() => cancel.mutate()}>
+                        Retry cancel
+                    </Button>
+                )}
             </div>
         </div>
     );

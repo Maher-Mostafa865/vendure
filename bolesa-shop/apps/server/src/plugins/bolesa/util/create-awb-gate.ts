@@ -15,9 +15,18 @@ export type CreateAwbGateDecision =
     | { kind: 'done'; trackingNumber: string }
     | {
           kind: 'terminal';
-          reason: 'abandoned' | 'canceled' | 'failed' | 'retry_exhausted' | 'cancel_requested';
+          reason:
+              | 'abandoned'
+              | 'canceled'
+              | 'failed'
+              | 'retry_exhausted'
+              | 'cancel_requested'
+              | 'cancel_retry_exhausted';
       }
-    /** Partner already accepted create asynchronously — lookup/reconcile only, never POST /awbs again. */
+    /**
+     * Lookup/reconcile only — never POST /awbs.
+     * Used for `awaiting_bolesa` and anomalous `created` without trackingNumber.
+     */
     | {
           kind: 'awaiting_lookup';
           shipmentKey: string;
@@ -36,6 +45,9 @@ export type CreateAwbGateDecision =
 /**
  * Explicit syncStatus gate for create-AWB processing.
  * Admin retry sets status back to `requested` before enqueue — that path still uses `proceed`.
+ *
+ * `created` without trackingNumber never blindly POSTs: heal via meta lookup only.
+ * Another create requires Admin retry → `requested`.
  */
 export function decideCreateAwbGate(shipment: CreateAwbGateShipment): CreateAwbGateDecision {
     const status = String(shipment.syncStatus);
@@ -48,16 +60,26 @@ export function decideCreateAwbGate(shipment: CreateAwbGateShipment): CreateAwbG
         status === 'abandoned' ||
         status === 'canceled' ||
         status === 'failed' ||
-        status === 'retry_exhausted'
+        status === 'retry_exhausted' ||
+        status === 'cancel_retry_exhausted'
     ) {
-        return { kind: 'terminal', reason: status as 'abandoned' | 'canceled' | 'failed' | 'retry_exhausted' };
+        return {
+            kind: 'terminal',
+            reason: status as
+                | 'abandoned'
+                | 'canceled'
+                | 'failed'
+                | 'retry_exhausted'
+                | 'cancel_retry_exhausted',
+        };
     }
 
     if (status === 'cancel_requested') {
         return { kind: 'terminal', reason: 'cancel_requested' };
     }
 
-    if (status === 'awaiting_bolesa') {
+    if (status === 'awaiting_bolesa' || (status === 'created' && !shipment.trackingNumber)) {
+        // Lookup-only heal path — never POST /awbs without Admin re-request.
         return {
             kind: 'awaiting_lookup',
             shipmentKey: shipment.shipmentKey,
@@ -67,9 +89,7 @@ export function decideCreateAwbGate(shipment: CreateAwbGateShipment): CreateAwbG
         };
     }
 
-    // requested (and any unexpected non-terminal status treated as create-eligible)
-    if (status === 'requested' || status === 'created') {
-        // created without TN is anomalous — allow proceed so pre-check/adopt can heal
+    if (status === 'requested') {
         return {
             kind: 'proceed',
             shipmentKey: shipment.shipmentKey,
