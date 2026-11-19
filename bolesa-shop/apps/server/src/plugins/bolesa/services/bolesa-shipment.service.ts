@@ -2,13 +2,11 @@ import { Injectable, OnModuleInit } from '@nestjs/common';
 import { HistoryEntryType } from '@vendure/common/lib/generated-types';
 import {
     ChannelService,
-    ConfigService,
     EventBus,
     Fulfillment,
     FulfillmentEvent,
     HistoryService,
     ID,
-    isInspectableJobQueueStrategy,
     JobQueue,
     JobQueueService,
     Logger,
@@ -71,7 +69,6 @@ export class BolesaShipmentService implements OnModuleInit {
         private orderService: OrderService,
         private historyService: HistoryService,
         private requestContextService: RequestContextService,
-        private configService: ConfigService,
     ) {}
 
     async onModuleInit() {
@@ -229,23 +226,29 @@ export class BolesaShipmentService implements OnModuleInit {
     }
 
     /**
-     * True when an inspectable JobQueue has PENDING/RUNNING/RETRYING create job for this
-     * fulfillment+channel+attempt. If the strategy is not inspectable, returns false
-     * (prefer possible duplicate enqueue; processor + Partner idempotency absorb it).
+     * True when job_record has a PENDING/RUNNING/RETRYING create job for this
+     * fulfillment+channel+attempt. Uses SQL (not Admin listQuery take limits) so recovery
+     * works under DefaultJobQueuePlugin.
      */
-    async hasActiveCreateAwbJob(shipment: Pick<BolesaShipment, 'fulfillmentId' | 'channelId' | 'attempt'>): Promise<boolean> {
-        const strategy = this.configService.jobQueueOptions.jobQueueStrategy;
-        if (!isInspectableJobQueueStrategy(strategy)) {
-            return false;
-        }
-        const { items } = await strategy.findMany({
-            filter: {
-                queueName: { eq: CREATE_AWB_QUEUE },
-                state: { in: [...ACTIVE_CREATE_JOB_STATES] },
-            },
-            take: 200,
-        });
-        return hasActiveEquivalentCreateJob(items, shipment);
+    async hasActiveCreateAwbJob(
+        shipment: Pick<BolesaShipment, 'fulfillmentId' | 'channelId' | 'attempt'>,
+    ): Promise<boolean> {
+        const rows: Array<{ state: string; data: unknown }> = await this.connection.rawConnection.query(
+            `SELECT state, data FROM job_record
+             WHERE "queueName" = $1
+               AND state = ANY($2::text[])
+               AND "isSettled" = false
+             LIMIT 500`,
+            [CREATE_AWB_QUEUE, [...ACTIVE_CREATE_JOB_STATES]],
+        );
+        const jobs = rows.map(row => ({
+            state: row.state,
+            data:
+                typeof row.data === 'string'
+                    ? (JSON.parse(row.data) as Record<string, unknown>)
+                    : ((row.data as Record<string, unknown> | null) ?? null),
+        }));
+        return hasActiveEquivalentCreateJob(jobs, shipment);
     }
 
     /**

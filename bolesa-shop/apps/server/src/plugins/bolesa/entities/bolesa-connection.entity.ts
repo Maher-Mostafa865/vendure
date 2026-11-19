@@ -30,7 +30,7 @@ export class BolesaConnection extends VendureEntity implements ChannelAware {
     @Column({ type: 'text', nullable: true })
     webhookSecretEncrypted: string | null;
 
-    @Column({ default: false })
+    @Column({ type: 'boolean', default: false })
     webhookApproved: boolean;
 
     /** JSON shipper address including resolution_hash */
@@ -47,7 +47,7 @@ export class BolesaConnection extends VendureEntity implements ChannelAware {
     @Column({ type: 'varchar', length: 32, default: 'manual' })
     creationMode: 'manual' | 'onPaymentSettled' | 'onPlaced';
 
-    @Column({ default: true })
+    @Column({ type: 'boolean', default: true })
     codEnabled: boolean;
 
     /** absorb | passToCustomer */
@@ -58,7 +58,7 @@ export class BolesaConnection extends VendureEntity implements ChannelAware {
     markupPercent: number;
 
     @Index()
-    @Column({ default: true })
+    @Column({ type: 'boolean', default: true })
     isActive: boolean;
 
     @Column({ type: 'timestamp', nullable: true })

@@ -15,6 +15,8 @@
     "start:worker": "node ./dist/index-worker.js",
     "start": "vendure start all",
     "test:bolesa": "node --import tsx --test src/plugins/bolesa/tests/*.spec.ts",
+    "test:bolesa:migrate": "tsx src/plugins/bolesa/tests/integration/migrate-test-db.ts",
+    "test:bolesa:integration": "TS_NODE_PROJECT=tsconfig.integration.json node -r reflect-metadata -r ts-node/register --test --test-timeout=120000 src/plugins/bolesa/tests/integration/*.integration.spec.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
