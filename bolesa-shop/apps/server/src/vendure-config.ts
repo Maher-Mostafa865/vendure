@@ -1,5 +1,6 @@
 import {
     dummyPaymentHandler,
+    DefaultEncryptionStrategy,
     DefaultJobQueuePlugin,
     DefaultSchedulerPlugin,
     DefaultSearchPlugin,
@@ -11,6 +12,7 @@ import { DashboardPlugin } from '@vendure/dashboard/plugin';
 import { GraphiqlPlugin } from '@vendure/graphiql-plugin';
 import 'dotenv/config';
 import path from 'path';
+import { BolesaPlugin } from './plugins/bolesa';
 
 const IS_DEV = process.env.APP_ENV === 'dev';
 // PORT wins because hosting platforms inject it into the environment at runtime, and that
@@ -60,10 +62,21 @@ export const config: VendureConfig = {
     paymentOptions: {
         paymentMethodHandlers: [dummyPaymentHandler],
     },
+    systemOptions: {
+        encryptionStrategy: new DefaultEncryptionStrategy({
+            secret: process.env.VENDURE_ENCRYPTION_KEY || process.env.COOKIE_SECRET || 'dev-only-change-me',
+        }),
+    },
     // When adding or altering custom field definitions, the database will
     // need to be updated. See the "Migrations" section in README.md.
     customFields: {},
     plugins: [
+        BolesaPlugin.init({
+            apiBaseUrl: process.env.BOLESA_API_BASE_URL || 'https://api.bolesa.example/api/pcl/v1',
+            encryptionSecret: process.env.VENDURE_ENCRYPTION_KEY || process.env.COOKIE_SECRET || 'dev-only-change-me',
+            rateCacheTtlMs: 600_000,
+            defaultCountryCode: 'EG',
+        }),
         GraphiqlPlugin.init(),
         AssetServerPlugin.init({
             route: 'assets',

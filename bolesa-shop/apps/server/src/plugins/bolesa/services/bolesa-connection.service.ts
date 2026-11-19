@@ -1,0 +1,163 @@
+import { Inject, Injectable } from '@nestjs/common';
+import {
+    ChannelService,
+    ConfigService,
+    Logger,
+    RequestContext,
+    TransactionalConnection,
+    UserInputError,
+} from '@vendure/core';
+
+import { BOLESA_PLUGIN_OPTIONS, loggerCtx } from '../constants';
+import { BolesaConnection } from '../entities/bolesa-connection.entity';
+import { BolesaPluginOptions } from '../types';
+import { BolesaApiError, BolesaClient } from './bolesa-client.service';
+
+export interface UpdateBolesaConnectionInput {
+    apiBaseUrl?: string;
+    token?: string;
+    shipperAddress?: Record<string, unknown> | null;
+    defaultServiceSlug?: string | null;
+    shipmentCategory?: 'dry' | 'heavy' | 'cold';
+    creationMode?: 'manual' | 'onPaymentSettled' | 'onPlaced';
+    codEnabled?: boolean;
+    codFeeMode?: 'absorb' | 'passToCustomer';
+    markupPercent?: number;
+    isActive?: boolean;
+}
+
+@Injectable()
+export class BolesaConnectionService {
+    constructor(
+        private connection: TransactionalConnection,
+        private channelService: ChannelService,
+        private client: BolesaClient,
+        private configService: ConfigService,
+        @Inject(BOLESA_PLUGIN_OPTIONS) private options: BolesaPluginOptions,
+    ) {}
+
+    async getForChannel(ctx: RequestContext): Promise<BolesaConnection | null> {
+        return this.connection.rawConnection.getRepository(BolesaConnection)
+            .createQueryBuilder('c')
+            .innerJoin('c.channels', 'ch', 'ch.id = :channelId', { channelId: ctx.channelId })
+            .getOne();
+    }
+
+    async requireActive(ctx: RequestContext): Promise<BolesaConnection> {
+        const conn = await this.getForChannel(ctx);
+        if (!conn || !conn.isActive) {
+            throw new UserInputError('Bolesa connection is not configured or inactive for this channel');
+        }
+        return conn;
+    }
+
+    decryptToken(conn: BolesaConnection): string {
+        const strategy = this.configService.systemOptions.encryptionStrategy;
+        if (!strategy?.isConfigured()) {
+            throw new Error('EncryptionStrategy is not configured; cannot decrypt Bolesa token');
+        }
+        return strategy.decrypt(conn.tokenEncrypted);
+    }
+
+    authFor(conn: BolesaConnection) {
+        return {
+            apiBaseUrl: conn.apiBaseUrl,
+            token: this.decryptToken(conn),
+        };
+    }
+
+    async upsert(ctx: RequestContext, input: UpdateBolesaConnectionInput): Promise<BolesaConnection> {
+        let entity = await this.getForChannel(ctx);
+        if (!entity) {
+            entity = new BolesaConnection({
+                apiBaseUrl: input.apiBaseUrl ?? this.options.apiBaseUrl,
+                tokenEncrypted: '',
+                tokenLast4: '',
+                isActive: true,
+            });
+            await this.channelService.assignToCurrentChannel(entity, ctx);
+        }
+
+        if (input.apiBaseUrl !== undefined) {
+            entity.apiBaseUrl = input.apiBaseUrl.replace(/\/$/, '');
+        }
+        if (input.token) {
+            entity.tokenEncrypted = this.encrypt(input.token);
+            entity.tokenLast4 = input.token.slice(-4);
+        }
+        if (input.shipperAddress !== undefined) {
+            entity.shipperAddress = input.shipperAddress;
+        }
+        if (input.defaultServiceSlug !== undefined) {
+            entity.defaultServiceSlug = input.defaultServiceSlug;
+        }
+        if (input.shipmentCategory !== undefined) {
+            entity.shipmentCategory = input.shipmentCategory;
+        }
+        if (input.creationMode !== undefined) {
+            entity.creationMode = input.creationMode;
+        }
+        if (input.codEnabled !== undefined) {
+            entity.codEnabled = input.codEnabled;
+        }
+        if (input.codFeeMode !== undefined) {
+            entity.codFeeMode = input.codFeeMode;
+        }
+        if (input.markupPercent !== undefined) {
+            entity.markupPercent = input.markupPercent;
+        }
+        if (input.isActive !== undefined) {
+            entity.isActive = input.isActive;
+        }
+
+        return this.connection.getRepository(ctx, BolesaConnection).save(entity);
+    }
+
+    async testConnection(ctx: RequestContext): Promise<{ ok: boolean; message: string }> {
+        const conn = await this.requireActive(ctx);
+        try {
+            await this.client.me(this.authFor(conn));
+            conn.lastVerifiedAt = new Date();
+            await this.connection.getRepository(ctx, BolesaConnection).save(conn);
+            return { ok: true, message: 'Bolesa Partner API token accepted' };
+        } catch (e: any) {
+            const message = e instanceof BolesaApiError ? `${e.code}: ${e.message}` : e?.message;
+            Logger.warn(`Bolesa connection test failed: ${message}`, loggerCtx);
+            return { ok: false, message: String(message) };
+        }
+    }
+
+    /** Safe Admin view — never includes plaintext token or webhook secret. */
+    toPublicView(conn: BolesaConnection | null) {
+        if (!conn) {
+            return null;
+        }
+        return {
+            id: conn.id,
+            apiBaseUrl: conn.apiBaseUrl,
+            tokenLast4: conn.tokenLast4,
+            webhookApproved: conn.webhookApproved,
+            shipperAddress: conn.shipperAddress,
+            defaultServiceSlug: conn.defaultServiceSlug,
+            shipmentCategory: conn.shipmentCategory,
+            creationMode: conn.creationMode,
+            codEnabled: conn.codEnabled,
+            codFeeMode: conn.codFeeMode,
+            markupPercent: conn.markupPercent,
+            isActive: conn.isActive,
+            lastVerifiedAt: conn.lastVerifiedAt,
+            labelNote:
+                'Labels from Partner API label_url may be private (Phase 0: S3 403). Download requires a future Bolesa label endpoint.',
+        };
+    }
+
+    private encrypt(plaintext: string): string {
+        const strategy = this.configService.systemOptions.encryptionStrategy;
+        if (!strategy?.isConfigured()) {
+            throw new Error(
+                'Configure systemOptions.encryptionStrategy (e.g. DefaultEncryptionStrategy) before saving Bolesa tokens',
+            );
+        }
+        return strategy.encrypt(plaintext);
+    }
+}
