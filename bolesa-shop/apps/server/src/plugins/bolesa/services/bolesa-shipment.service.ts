@@ -5,6 +5,7 @@ import {
     EventBus,
     Fulfillment,
     FulfillmentEvent,
+    FulfillmentLine,
     HistoryService,
     ID,
     JobQueue,
@@ -37,6 +38,7 @@ import {
     PaymentPreference,
     PersistedBolesaQuote,
 } from '../types';
+import { decideCreateAwbGate, isValidPersistedOrderId } from '../util/create-awb-gate';
 import { minorToMajor } from '../util/money';
 import {
     ACTIVE_CREATE_JOB_STATES,
@@ -136,6 +138,7 @@ export class BolesaShipmentService implements OnModuleInit {
     /**
      * After commit: create outbox row (no HTTP), then enqueue AWB job.
      * Save and JobQueue.add are not one DB transaction — recovery re-enqueues orphans.
+     * Never persists a fabricated orderId; missing Order fails closed without an outbox row.
      */
     private async onFulfillmentCreated(event: FulfillmentEvent) {
         const fulfillment = event.entity;
@@ -152,11 +155,24 @@ export class BolesaShipmentService implements OnModuleInit {
             return;
         }
 
+        const orderId = await this.resolveOrderIdForFulfillment(ctx, fulfillment.id);
+        if (!isValidPersistedOrderId(orderId)) {
+            const message =
+                `Bolesa outbox skipped: could not resolve Order for fulfillment ${fulfillment.id}. ` +
+                `No shipment row created (avoids indefinite retries on orderId=0).`;
+            Logger.error(message, loggerCtx);
+            await this.patchFulfillment(ctx, fulfillment.id, {
+                bolesaSyncStatus: 'failed',
+                bolesaLabelAvailability: 'unavailable',
+            });
+            return;
+        }
+
         const shipmentKey = `f${fulfillment.id}`;
         const attempt = 1;
         const shipment = new BolesaShipment({
             fulfillmentId: fulfillment.id,
-            orderId: '0',
+            orderId,
             channelId: ctx.channelId,
             shipmentKey,
             idempotencyKey: `${shipmentKey}-a${attempt}`,
@@ -166,15 +182,6 @@ export class BolesaShipmentService implements OnModuleInit {
             codCollectionStatus: 'pending',
             codRemittanceStatus: 'unknown',
         });
-
-        // Resolve order id from fulfillment lines if available
-        const withOrders = await this.connection.getRepository(ctx, Fulfillment).findOne({
-            where: { id: fulfillment.id },
-            relations: { orders: true },
-        });
-        if (withOrders?.orders?.[0]) {
-            shipment.orderId = withOrders.orders[0].id;
-        }
 
         await this.channelService.assignToCurrentChannel(shipment, ctx);
         await this.connection.getRepository(ctx, BolesaShipment).save(shipment);
@@ -189,6 +196,30 @@ export class BolesaShipmentService implements OnModuleInit {
         } as any);
 
         await this.ensureCreateAwbJobEnqueued(shipment, { ignoreGracePeriod: true });
+    }
+
+    /**
+     * Resolve Order id via Fulfillment.orders, then FulfillmentLine → OrderLine.order.
+     */
+    async resolveOrderIdForFulfillment(ctx: RequestContext, fulfillmentId: ID): Promise<ID | null> {
+        const withOrders = await this.connection.getRepository(ctx, Fulfillment).findOne({
+            where: { id: fulfillmentId },
+            relations: { orders: true },
+        });
+        const fromOrders = withOrders?.orders?.[0]?.id;
+        if (isValidPersistedOrderId(fromOrders)) {
+            return fromOrders!;
+        }
+
+        const line = await this.connection.getRepository(ctx, FulfillmentLine).findOne({
+            where: { fulfillment: { id: fulfillmentId } },
+            relations: { orderLine: { order: true } },
+        });
+        const fromLine = (line as any)?.orderLine?.order?.id ?? (line as any)?.orderLine?.orderId;
+        if (isValidPersistedOrderId(fromLine)) {
+            return fromLine;
+        }
+        return null;
     }
 
     /**
@@ -462,26 +493,7 @@ export class BolesaShipmentService implements OnModuleInit {
             if (!shipment) {
                 return { kind: 'missing' as const };
             }
-            if (shipment.syncStatus === 'created' && shipment.trackingNumber) {
-                return {
-                    kind: 'done' as const,
-                    trackingNumber: shipment.trackingNumber,
-                };
-            }
-            if (
-                shipment.syncStatus === 'abandoned' ||
-                shipment.syncStatus === 'canceled' ||
-                shipment.syncStatus === 'failed'
-            ) {
-                return { kind: 'terminal' as const };
-            }
-            return {
-                kind: 'proceed' as const,
-                shipmentKey: shipment.shipmentKey,
-                idempotencyKey: shipment.idempotencyKey,
-                orderId: shipment.orderId,
-                attempt: shipment.attempt,
-            };
+            return decideCreateAwbGate(shipment);
         });
 
         if (gate.kind === 'missing') {
@@ -492,13 +504,18 @@ export class BolesaShipmentService implements OnModuleInit {
             return { ok: true, trackingNumber: gate.trackingNumber };
         }
         if (gate.kind === 'terminal') {
+            Logger.debug(
+                `createAwb skipped for fulfillment ${fulfillmentId}: terminal/gated (${gate.reason})`,
+                loggerCtx,
+            );
             return { ok: false };
         }
 
         const conn = await this.connectionService.requireActive(ctx);
         const auth = this.connectionService.authFor(conn);
 
-        // Pre-check: adopt existing AWB if any (outside lock; re-checked under lock below)
+        // Pre-check / awaiting_bolesa: adopt existing AWB if Partner already has one.
+        // awaiting_lookup never POSTs /awbs — lookup only.
         const pre = await this.client.findAwbsByMeta(auth, 'vendure_shipment_key', gate.shipmentKey);
         if (pre[0]?.trackingNumber) {
             return this.connection.withTransaction(ctx, async txCtx => {
@@ -506,12 +523,36 @@ export class BolesaShipmentService implements OnModuleInit {
                 if (!shipment) {
                     return { ok: false };
                 }
-                if (shipment.syncStatus === 'created' && shipment.trackingNumber) {
-                    return { ok: true, trackingNumber: shipment.trackingNumber };
+                const again = decideCreateAwbGate(shipment);
+                if (again.kind === 'done') {
+                    return { ok: true, trackingNumber: again.trackingNumber };
+                }
+                if (again.kind === 'terminal') {
+                    return { ok: false };
                 }
                 await this.adoptAwb(txCtx, shipment, pre[0]);
                 return { ok: true, trackingNumber: pre[0].trackingNumber };
             });
+        }
+
+        if (gate.kind === 'awaiting_lookup') {
+            // Still queued at Partner; leave for reconcile — do not create again.
+            return { ok: true };
+        }
+
+        if (!isValidPersistedOrderId(gate.orderId)) {
+            await this.connection.withTransaction(ctx, async txCtx => {
+                const shipment = await this.lockShipmentForFulfillment(txCtx, fulfillmentId);
+                if (!shipment) {
+                    return;
+                }
+                shipment.syncStatus = 'failed';
+                shipment.lastError = `Invalid orderId on outbox row (${String(gate.orderId)})`;
+                shipment.lastErrorAt = new Date();
+                await this.connection.getRepository(txCtx, BolesaShipment).save(shipment);
+                await this.patchFulfillment(txCtx, fulfillmentId, { bolesaSyncStatus: 'failed' });
+            });
+            return { ok: false };
         }
 
         const order = await this.orderService.findOne(ctx, gate.orderId, [
@@ -521,7 +562,18 @@ export class BolesaShipmentService implements OnModuleInit {
             'customer',
         ]);
         if (!order) {
-            throw new Error(`Order ${gate.orderId} not found`);
+            await this.connection.withTransaction(ctx, async txCtx => {
+                const shipment = await this.lockShipmentForFulfillment(txCtx, fulfillmentId);
+                if (!shipment) {
+                    return;
+                }
+                shipment.syncStatus = 'failed';
+                shipment.lastError = `Order ${gate.orderId} not found`;
+                shipment.lastErrorAt = new Date();
+                await this.connection.getRepository(txCtx, BolesaShipment).save(shipment);
+                await this.patchFulfillment(txCtx, fulfillmentId, { bolesaSyncStatus: 'failed' });
+            });
+            return { ok: false };
         }
 
         // Snapshot fields needed for the Partner request (stable under attempt-scoped key)
@@ -540,15 +592,18 @@ export class BolesaShipmentService implements OnModuleInit {
                 if (!shipment) {
                     return { ok: false };
                 }
-                if (shipment.syncStatus === 'created' && shipment.trackingNumber) {
-                    return { ok: true, trackingNumber: shipment.trackingNumber };
+                const again = decideCreateAwbGate(shipment);
+                if (again.kind === 'done') {
+                    return { ok: true, trackingNumber: again.trackingNumber };
                 }
-                if (
-                    shipment.syncStatus === 'abandoned' ||
-                    shipment.syncStatus === 'canceled' ||
-                    shipment.syncStatus === 'failed'
-                ) {
-                    return { ok: false };
+                if (again.kind === 'terminal' || again.kind === 'awaiting_lookup') {
+                    // cancel_requested / failed / already awaiting — do not overwrite with a late create
+                    if (again.kind === 'awaiting_lookup' && result.status === 'queued') {
+                        return { ok: true };
+                    }
+                    if (again.kind === 'terminal') {
+                        return { ok: false };
+                    }
                 }
                 if (result.status === 'queued') {
                     shipment.syncStatus = 'awaiting_bolesa';
