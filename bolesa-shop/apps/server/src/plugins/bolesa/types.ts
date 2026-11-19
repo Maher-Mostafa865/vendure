@@ -21,6 +21,8 @@ export type BolesaShipmentSyncStatus =
     | 'awaiting_bolesa'
     | 'created'
     | 'failed'
+    /** JobQueue create retries exhausted — needs Admin retry (not auto-recovered). */
+    | 'retry_exhausted'
     | 'cancel_requested'
     | 'canceled'
     | 'abandoned';
@@ -115,6 +117,8 @@ export interface CancelAwbJobData {
     fulfillmentId: ID;
     channelId: ID;
     trackingNumber: string;
+    /** Snapshot of shipment.attempt at enqueue time (cancel idempotency key). */
+    attempt: number;
 }
 
 export interface ApplyStatusJobData {

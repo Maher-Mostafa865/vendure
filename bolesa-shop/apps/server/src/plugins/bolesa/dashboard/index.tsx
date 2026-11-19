@@ -230,7 +230,9 @@ function ShipmentCard({
             </div>
             {data?.lastError && <div className="text-destructive">Error: {data.lastError}</div>}
             <div className="flex gap-2">
-                {(data?.syncStatus === 'failed' || data?.syncStatus === 'requested') && (
+                {(data?.syncStatus === 'failed' ||
+                    data?.syncStatus === 'retry_exhausted' ||
+                    data?.syncStatus === 'requested') && (
                     <Button type="button" size="sm" onClick={() => retry.mutate()}>
                         Retry AWB (attempt {(data?.attempt ?? 0) + 1})
                     </Button>

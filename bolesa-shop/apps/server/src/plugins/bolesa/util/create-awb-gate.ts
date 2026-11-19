@@ -13,7 +13,10 @@ export interface CreateAwbGateShipment {
 
 export type CreateAwbGateDecision =
     | { kind: 'done'; trackingNumber: string }
-    | { kind: 'terminal'; reason: 'abandoned' | 'canceled' | 'failed' | 'cancel_requested' }
+    | {
+          kind: 'terminal';
+          reason: 'abandoned' | 'canceled' | 'failed' | 'retry_exhausted' | 'cancel_requested';
+      }
     /** Partner already accepted create asynchronously — lookup/reconcile only, never POST /awbs again. */
     | {
           kind: 'awaiting_lookup';
@@ -41,8 +44,13 @@ export function decideCreateAwbGate(shipment: CreateAwbGateShipment): CreateAwbG
         return { kind: 'done', trackingNumber: String(shipment.trackingNumber) };
     }
 
-    if (status === 'abandoned' || status === 'canceled' || status === 'failed') {
-        return { kind: 'terminal', reason: status };
+    if (
+        status === 'abandoned' ||
+        status === 'canceled' ||
+        status === 'failed' ||
+        status === 'retry_exhausted'
+    ) {
+        return { kind: 'terminal', reason: status as 'abandoned' | 'canceled' | 'failed' | 'retry_exhausted' };
     }
 
     if (status === 'cancel_requested') {

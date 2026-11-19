@@ -7,9 +7,14 @@ import { BolesaApiError } from '../services/bolesa-client.service';
 import {
     ACTIVE_CREATE_JOB_STATES,
     classifyCreateAwbHttpFailure,
+    decideCancelJobEnqueue,
     decideCreateJobEnqueue,
+    hasActiveEquivalentCancelJob,
     hasActiveEquivalentCreateJob,
+    isExhaustedJobRecord,
+    isLastJobAttempt,
     isPastOrphanGrace,
+    jobMatchesCancelShipment,
     jobMatchesShipment,
     ORPHAN_CREATE_JOB_GRACE_MS,
 } from '../util/outbox-recovery';
@@ -65,8 +70,15 @@ describe('outbox recovery decisions', () => {
         assert.equal(decision, 'skip_status');
     });
 
-    it('skips created / abandoned / canceled / awaiting_bolesa', () => {
-        for (const syncStatus of ['created', 'abandoned', 'canceled', 'awaiting_bolesa', 'cancel_requested']) {
+    it('skips created / abandoned / canceled / awaiting_bolesa / retry_exhausted', () => {
+        for (const syncStatus of [
+            'created',
+            'abandoned',
+            'canceled',
+            'awaiting_bolesa',
+            'cancel_requested',
+            'retry_exhausted',
+        ]) {
             const decision = decideCreateJobEnqueue({
                 shipment: { ...baseShipment, syncStatus },
                 hasActiveEquivalentJob: false,
@@ -249,6 +261,124 @@ describe('duplicate FulfillmentEvent handling policy', () => {
                 ignoreGracePeriod: true,
             }),
             'skip_status',
+        );
+    });
+});
+
+describe('create job exhaustion', () => {
+    it('detects FAILED jobs with attempts > retries as exhausted', () => {
+        assert.equal(
+            isExhaustedJobRecord({ state: JobState.FAILED, attempts: 6, retries: 5 }),
+            true,
+        );
+        assert.equal(
+            isExhaustedJobRecord({ state: JobState.FAILED, attempts: 5, retries: 5 }),
+            false,
+        );
+        assert.equal(
+            isExhaustedJobRecord({ state: JobState.PENDING, attempts: 6, retries: 5 }),
+            false,
+        );
+    });
+
+    it('isLastJobAttempt matches Vendure fail semantics', () => {
+        assert.equal(isLastJobAttempt({ attempts: 6, retries: 5 }), true);
+        assert.equal(isLastJobAttempt({ attempts: 5, retries: 5 }), false);
+    });
+});
+
+describe('cancel job enqueue decisions', () => {
+    const cancelBase = {
+        fulfillmentId: '10',
+        channelId: '1',
+        trackingNumber: 'TN-1',
+        syncStatus: 'cancel_requested' as const,
+        updatedAt: new Date('2026-01-01T00:00:00.000Z'),
+    };
+
+    it('enqueues orphaned cancel_requested past grace when no active job', () => {
+        assert.equal(
+            decideCancelJobEnqueue({
+                shipment: cancelBase,
+                hasActiveEquivalentJob: false,
+                hasExhaustedJob: false,
+                now: new Date(cancelBase.updatedAt.getTime() + ORPHAN_CREATE_JOB_GRACE_MS + 1),
+            }),
+            'enqueue',
+        );
+    });
+
+    it('skips when an active cancel job exists', () => {
+        assert.equal(
+            decideCancelJobEnqueue({
+                shipment: cancelBase,
+                hasActiveEquivalentJob: true,
+                hasExhaustedJob: false,
+                ignoreGracePeriod: true,
+            }),
+            'skip_active_job',
+        );
+    });
+
+    it('skips exhausted cancel jobs unless ignoreExhausted (explicit request)', () => {
+        assert.equal(
+            decideCancelJobEnqueue({
+                shipment: cancelBase,
+                hasActiveEquivalentJob: false,
+                hasExhaustedJob: true,
+                ignoreGracePeriod: true,
+            }),
+            'skip_exhausted',
+        );
+        assert.equal(
+            decideCancelJobEnqueue({
+                shipment: cancelBase,
+                hasActiveEquivalentJob: false,
+                hasExhaustedJob: true,
+                ignoreGracePeriod: true,
+                ignoreExhausted: true,
+            }),
+            'enqueue',
+        );
+    });
+
+    it('never auto-cancels unrelated sync statuses', () => {
+        for (const syncStatus of ['requested', 'created', 'failed', 'canceled', 'abandoned', 'retry_exhausted']) {
+            assert.equal(
+                decideCancelJobEnqueue({
+                    shipment: { ...cancelBase, syncStatus },
+                    hasActiveEquivalentJob: false,
+                    hasExhaustedJob: false,
+                    ignoreGracePeriod: true,
+                }),
+                'skip_status',
+                syncStatus,
+            );
+        }
+    });
+
+    it('matches cancel jobs by fulfillment+channel+trackingNumber', () => {
+        assert.equal(
+            jobMatchesCancelShipment(
+                {
+                    state: JobState.PENDING,
+                    data: { fulfillmentId: '10', channelId: '1', trackingNumber: 'TN-1', attempt: 1 },
+                },
+                cancelBase,
+            ),
+            true,
+        );
+        assert.equal(
+            hasActiveEquivalentCancelJob(
+                [
+                    {
+                        state: JobState.PENDING,
+                        data: { fulfillmentId: '10', channelId: '99', trackingNumber: 'TN-1', attempt: 1 },
+                    },
+                ],
+                cancelBase,
+            ),
+            false,
         );
     });
 });

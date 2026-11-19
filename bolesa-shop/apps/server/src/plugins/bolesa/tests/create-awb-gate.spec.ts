@@ -58,6 +58,14 @@ describe('decideCreateAwbGate', () => {
         }
     });
 
+    it('retry_exhausted → terminal (Admin retry restores requested)', () => {
+        const d = decideCreateAwbGate({ ...base, syncStatus: 'retry_exhausted' });
+        assert.equal(d.kind, 'terminal');
+        if (d.kind === 'terminal') {
+            assert.equal(d.reason, 'retry_exhausted');
+        }
+    });
+
     it('abandoned → terminal', () => {
         const d = decideCreateAwbGate({ ...base, syncStatus: 'abandoned' });
         assert.equal(d.kind, 'terminal');
