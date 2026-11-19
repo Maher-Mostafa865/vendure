@@ -1416,16 +1416,22 @@ export class BolesaShipmentService implements OnModuleInit {
             where: { channelId, syncStatus: 'cancel_requested', updatedAt: LessThan(cutoff) },
         });
 
+        // Queue counts are filtered by job payload channelId for the current Admin channel context.
         const queueStats = async (queueName: string) => {
             const active: Array<{ count: string }> = await this.connection.rawConnection.query(
                 `SELECT count(*)::text AS count FROM job_record
-                 WHERE "queueName" = $1 AND state = ANY($2::text[]) AND "isSettled" = false`,
-                [queueName, [...ACTIVE_CREATE_JOB_STATES]],
+                 WHERE "queueName" = $1
+                   AND state = ANY($2::text[])
+                   AND "isSettled" = false
+                   AND (data::json->>'channelId') = $3`,
+                [queueName, [...ACTIVE_CREATE_JOB_STATES], String(channelId)],
             );
             const failed: Array<{ count: string }> = await this.connection.rawConnection.query(
                 `SELECT count(*)::text AS count FROM job_record
-                 WHERE "queueName" = $1 AND state = $2`,
-                [queueName, JobState.FAILED],
+                 WHERE "queueName" = $1
+                   AND state = $2
+                   AND (data::json->>'channelId') = $3`,
+                [queueName, JobState.FAILED, String(channelId)],
             );
             return {
                 queueName,
@@ -1434,14 +1440,14 @@ export class BolesaShipmentService implements OnModuleInit {
             };
         };
 
-        let lastPartnerVerifiedAt: string | null = null;
+        let lastConnectionTestAt: string | null = null;
         try {
             const conn = await this.connectionService.getForChannel(ctx);
-            lastPartnerVerifiedAt = conn?.lastVerifiedAt
+            lastConnectionTestAt = conn?.lastVerifiedAt
                 ? new Date(conn.lastVerifiedAt).toISOString()
                 : null;
         } catch {
-            lastPartnerVerifiedAt = null;
+            lastConnectionTestAt = null;
         }
 
         const snapshot: BolesaOpsSnapshot = {
@@ -1459,11 +1465,12 @@ export class BolesaShipmentService implements OnModuleInit {
                 },
             ],
             queues: [await queueStats(CREATE_AWB_QUEUE), await queueStats(CANCEL_AWB_QUEUE)],
-            lastPartnerVerifiedAt,
+            lastConnectionTestAt,
             notes: [
                 'Counts only; no shipment/customer PII.',
+                'Shipment counts and queue job counts are scoped to the current Admin channelId.',
                 'Alert when stuckRequested/stuckCancelRequested/retryExhausted/cancelRetryExhausted grow.',
-                'lastPartnerVerifiedAt comes from connection test/verify — not every Partner call.',
+                'lastConnectionTestAt = last successful testBolesaConnection only — not live Partner traffic health.',
             ],
         };
 

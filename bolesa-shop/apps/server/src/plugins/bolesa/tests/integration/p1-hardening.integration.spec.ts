@@ -377,7 +377,7 @@ describe('Phase 1.9 hardening (vendure-bolesa-test)', () => {
         evidence.test6 = {
             failed: health.channels[0].failed,
             retryExhausted: health.channels[0].retryExhausted,
-            lastPartnerVerifiedAt: health.lastPartnerVerifiedAt,
+            lastConnectionTestAt: health.lastConnectionTestAt,
         };
     });
 

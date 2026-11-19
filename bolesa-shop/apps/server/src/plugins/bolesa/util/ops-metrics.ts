@@ -23,7 +23,11 @@ export interface BolesaOpsSnapshot {
     stuckThresholdMs: number;
     channels: BolesaChannelHealthCounts[];
     queues: BolesaQueueHealth[];
-    lastPartnerVerifiedAt: string | null;
+    /**
+     * Timestamp of the last successful Admin `testBolesaConnection` (`me` call) for this channel.
+     * NOT updated on create/cancel/status Partner traffic — do not treat as live API health.
+     */
+    lastConnectionTestAt: string | null;
     notes: string[];
 }
 

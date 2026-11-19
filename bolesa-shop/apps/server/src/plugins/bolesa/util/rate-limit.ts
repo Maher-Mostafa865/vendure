@@ -1,6 +1,16 @@
 /**
- * Simple fixed-window rate limiter (in-process). Suitable for single-worker Shop API.
- * Multi-instance deployments should replace with a shared store.
+ * Simple fixed-window rate limiter (in-process / per Node process).
+ *
+ * Suitable for: local dev and single-instance Server deployments.
+ *
+ * Production multi-instance limitation:
+ * - Each Server process keeps its own Map — limits are NOT shared across replicas.
+ * - Effective ceiling ≈ maxRequests × number_of_server_instances.
+ * - Do NOT add Redis here without an explicit shared-store implementation plan
+ *   (key schema, TTL, fail-open vs fail-closed, and load tests).
+ *
+ * Until a shared limiter exists, prefer a single Shop API instance for city search
+ * or terminate rate limiting at the edge (CDN / API gateway) in addition to this guard.
  */
 export interface RateLimitConfig {
     maxRequests: number;

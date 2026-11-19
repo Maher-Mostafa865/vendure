@@ -1,6 +1,7 @@
 import { Logger, ScheduledTask } from '@vendure/core';
 
 import { loggerCtx } from '../constants';
+import { formatOpsMetricLine } from '../util/ops-metrics';
 import { BolesaShipmentService } from './bolesa-shipment.service';
 
 /**
@@ -24,7 +25,14 @@ export const bolesaReconcileTask = new ScheduledTask({
             );
             return result;
         } catch (e: any) {
-            Logger.error(`Bolesa reconcile failed: ${e?.message}`, loggerCtx);
+            // Stable metric line for external alerting (no PII).
+            Logger.error(
+                formatOpsMetricLine('reconcile_failed', {
+                    errorClass: e?.name ?? 'Error',
+                    message: String(e?.message ?? e).slice(0, 200),
+                }),
+                loggerCtx,
+            );
             throw e;
         }
     },

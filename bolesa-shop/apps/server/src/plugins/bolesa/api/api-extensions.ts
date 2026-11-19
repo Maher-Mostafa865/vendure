@@ -70,7 +70,11 @@ export const adminApiExtensions = gql`
         stuckThresholdMs: Int!
         channels: [BolesaChannelHealth!]!
         queues: [BolesaQueueHealth!]!
-        lastPartnerVerifiedAt: DateTime
+        """
+        Last successful Admin testBolesaConnection (Partner /me) for the current channel.
+        Not updated by create/cancel/status traffic — not a live Partner health probe.
+        """
+        lastConnectionTestAt: DateTime
         notes: [String!]!
     }
 
