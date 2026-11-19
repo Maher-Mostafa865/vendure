@@ -1,0 +1,18 @@
+{
+  "probedAt": "2026-11-19T20:55:00Z",
+  "bucketUrlBase": "https://bolesa-cdn.s3.ap-south-1.amazonaws.com/",
+  "disk": "shipping_labels_s3",
+  "root": "{storagePrefix}/app/public/labels",
+  "visibilityInConfig": "commented out (not set to public)",
+  "probes": [
+    {"url": "https://bolesa-cdn.s3.ap-south-1.amazonaws.com/", "http": 403},
+    {"url": "https://bolesa-cdn.s3.ap-south-1.amazonaws.com/app/public/labels/", "http": 403},
+    {"url": "https://bolesa-cdn.s3.ap-south-1.amazonaws.com/app/public/labels/phase0-probe-nonexistent.pdf", "http": 403}
+  ],
+  "interpretation": "Anonymous HEAD requests return 403 AccessDenied (XML). On AWS S3, missing objects on a public-read bucket typically return 404; 403 for a fabricated key indicates the bucket (or object ACL) denies anonymous access. Therefore unsigned Storage::url() label_url values are NOT reliably externally accessible without credentials. No real customer label URLs were requested.",
+  "sourceRefs": [
+    "app/Models/ShippingAwb.php:411-427",
+    "config/filesystems.php:90-101"
+  ],
+  "caveat": "Could not HEAD a real object key without sandbox credentials. Bucket policy exceptions for specific prefixes remain possible but unverified."
+}

@@ -1,0 +1,9 @@
+{
+  "ok": true,
+  "conclusion": "EncryptionStrategy encrypt/decrypt work for arbitrary strings. A plugin service can inject ConfigService.systemOptions.encryptionStrategy (or DefaultEncryptionStrategy) and store BolesaConnection.tokenEncrypted safely. No TypeORM secret transformer required.",
+  "evidence": {
+    "prefix": "enc:v1:",
+    "algorithm": "aes-256-gcm",
+    "source": "packages/core/src/config/system/default-encryption-strategy.ts"
+  }
+}

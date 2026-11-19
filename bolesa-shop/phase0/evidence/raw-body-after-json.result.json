@@ -1,0 +1,22 @@
+{
+  "ok": true,
+  "observed": {
+    "isBuffer": false,
+    "typeofBody": "object",
+    "bodyEqualsPayload": false,
+    "parsedObjectKeys": [
+      "id",
+      "type",
+      "api_version",
+      "created_at",
+      "data"
+    ],
+    "hmacOk": true
+  },
+  "conclusion": "FAIL under Nest-like ordering: global express.json() consumed the body before route-scoped express.raw(). Prefer bootstrap nestApplicationOptions.rawBody=true OR mount raw middleware on a catch-all beforeListen route so Nest does not register a conflicting parser. Do not rely on route-scoped express.raw alone.",
+  "vendureRefs": [
+    "packages/core/src/bootstrap.ts:240-252",
+    "packages/core/src/wrap-early-middleware-handler.ts",
+    "packages/core/src/common/types/common-types.ts Middleware.beforeListen"
+  ]
+}

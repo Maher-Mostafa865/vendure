@@ -1,0 +1,9 @@
+{
+  "ok": true,
+  "observed": {
+    "isBuffer": true,
+    "bodyEqualsPayload": true,
+    "hmacOk": true
+  },
+  "conclusion": "PASS: when express.raw is mounted on the webhook route BEFORE global express.json, req.body is a Buffer and HMAC verifies."
+}
