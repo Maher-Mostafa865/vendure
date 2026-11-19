@@ -285,3 +285,20 @@ To refresh: run `testBolesaConnection` for the channel. A stale/null value is **
 | Cancel | `bolesaCancelShipment(fulfillmentId)` |
 | Abandon | `bolesaAbandonShipment(fulfillmentId)` |
 | Explicit Partner token test | `testBolesaConnection` |
+| Opt-in local/sandbox Partner E2E | See §13 |
+
+---
+
+## 13. Local / sandbox Partner E2E (opt-in)
+
+**Safety:** Only against an allowlisted local host (`127.0.0.1` / `localhost`). Never point this harness at production Partner.
+
+1. Put `BOLESA_API_BASE_URL` + `BOLESA_PARTNER_TOKEN` in gitignored `bolesa-shop/.env.sandbox`.
+2. Confirm the URL host is local before any create/cancel.
+3. From `apps/server`:
+
+```bash
+npm run test:bolesa:sandbox-e2e
+```
+
+Uses `vendure-bolesa-test` only. Evidence: [SANDBOX_E2E_EXECUTION_REPORT.md](./SANDBOX_E2E_EXECUTION_REPORT.md).
