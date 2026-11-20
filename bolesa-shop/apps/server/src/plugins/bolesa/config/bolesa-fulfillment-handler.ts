@@ -1,4 +1,10 @@
-import { FulfillmentHandler, LanguageCode, Logger, UserInputError } from '@vendure/core';
+import {
+    FulfillmentHandler,
+    LanguageCode,
+    Logger,
+    OrderService,
+    UserInputError,
+} from '@vendure/core';
 
 import { BOLESA_FULFILLMENT_HANDLER_CODE, loggerCtx } from '../constants';
 import { BolesaConnectionService } from '../services/bolesa-connection.service';
@@ -8,6 +14,7 @@ import { BolesaConnectionService } from '../services/bolesa-connection.service';
  * Outbox row + AWB job are created after commit via FulfillmentEvent → BolesaShipmentService.
  */
 let connectionService: BolesaConnectionService;
+let orderService: OrderService;
 
 export const bolesaFulfillmentHandler = new FulfillmentHandler({
     code: BOLESA_FULFILLMENT_HANDLER_CODE,
@@ -20,11 +27,21 @@ export const bolesaFulfillmentHandler = new FulfillmentHandler({
     args: {},
     init(injector) {
         connectionService = injector.get(BolesaConnectionService);
+        orderService = injector.get(OrderService);
     },
     createFulfillment: async (ctx, orders, lines) => {
-        const order = orders[0];
-        if (!order) {
+        const orderRef = orders[0];
+        if (!orderRef) {
             throw new UserInputError('No order for fulfillment');
+        }
+        // OrderService may pass Order entities without relations loaded.
+        const order =
+            (await orderService.findOne(ctx, orderRef.id, [
+                'lines',
+                'lines.productVariant',
+            ])) ?? orderRef;
+        if (!Array.isArray(order.lines)) {
+            throw new UserInputError(`Order ${orderRef.id} has no lines available for fulfillment`);
         }
         await connectionService.requireActive(ctx);
 

@@ -48,30 +48,65 @@ import { BolesaPluginOptions } from './types';
     compatibility: '^3.0.0',
     dashboard: './dashboard/index.tsx',
     configuration: (config: RuntimeVendureConfig) => {
+        // Idempotent: server + worker bootstrap in one process must not duplicate fields/handlers.
         const fields = getBolesaCustomFields();
-        config.customFields.ProductVariant.push(...fields.ProductVariant);
-        config.customFields.Address.push(...fields.Address);
-        config.customFields.Order.push(...fields.Order);
-        config.customFields.Fulfillment.push(...fields.Fulfillment);
+        const pushUnique = <T extends { name?: string; code?: string }>(
+            target: T[],
+            items: T[],
+            key: 'name' | 'code',
+        ) => {
+            for (const item of items) {
+                const k = item[key];
+                if (k != null && target.some(t => t[key] === k)) {
+                    continue;
+                }
+                target.push(item);
+            }
+        };
+        pushUnique(config.customFields.ProductVariant, fields.ProductVariant, 'name');
+        pushUnique(config.customFields.Address, fields.Address, 'name');
+        pushUnique(config.customFields.Order, fields.Order, 'name');
+        pushUnique(config.customFields.Fulfillment, fields.Fulfillment, 'name');
 
-        config.authOptions.customPermissions = [
-            ...(config.authOptions.customPermissions ?? []),
-            bolesaConnectionPermission,
-            bolesaShipmentPermission,
-        ];
+        const perms = config.authOptions.customPermissions ?? [];
+        for (const p of [bolesaConnectionPermission, bolesaShipmentPermission]) {
+            if (!perms.some(x => (x as any).name === (p as any).name || x === p)) {
+                perms.push(p);
+            }
+        }
+        config.authOptions.customPermissions = perms;
 
-        config.shippingOptions.shippingEligibilityCheckers.push(bolesaEligibilityChecker);
-        config.shippingOptions.shippingCalculators.push(bolesaShippingCalculator);
-        config.shippingOptions.fulfillmentHandlers.push(bolesaFulfillmentHandler);
-        config.shippingOptions.process = [
-            ...(config.shippingOptions.process ?? []),
-            bolesaFulfillmentProcess,
-        ];
+        pushUnique(
+            config.shippingOptions.shippingEligibilityCheckers as any[],
+            [bolesaEligibilityChecker] as any[],
+            'code',
+        );
+        pushUnique(
+            config.shippingOptions.shippingCalculators as any[],
+            [bolesaShippingCalculator] as any[],
+            'code',
+        );
+        pushUnique(
+            config.shippingOptions.fulfillmentHandlers as any[],
+            [bolesaFulfillmentHandler] as any[],
+            'code',
+        );
+        const processes = config.shippingOptions.process ?? [];
+        if (!processes.includes(bolesaFulfillmentProcess)) {
+            config.shippingOptions.process = [...processes, bolesaFulfillmentProcess];
+        }
 
-        config.paymentOptions.paymentMethodHandlers.push(bolesaCodPaymentHandler);
+        pushUnique(
+            config.paymentOptions.paymentMethodHandlers as any[],
+            [bolesaCodPaymentHandler] as any[],
+            'code',
+        );
 
         config.schedulerOptions = config.schedulerOptions ?? {};
-        config.schedulerOptions.tasks = [...(config.schedulerOptions.tasks ?? []), bolesaReconcileTask];
+        const tasks = config.schedulerOptions.tasks ?? [];
+        if (!tasks.some(t => t.id === bolesaReconcileTask.id)) {
+            config.schedulerOptions.tasks = [...tasks, bolesaReconcileTask];
+        }
 
         return config;
     },

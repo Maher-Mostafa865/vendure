@@ -209,7 +209,9 @@ export class BolesaShipmentService implements OnModuleInit {
             return;
         }
 
-        const shipmentKey = `f${fulfillment.id}`;
+        // Partner Idempotency-Key must be 8–128 chars ([A-Za-z0-9_.:-]).
+        // Short keys like `f7-a1` are rejected with 422 invalid_idempotency_key.
+        const shipmentKey = `bolesa-f${fulfillment.id}-c${ctx.channelId}`;
         const attempt = 1;
         const shipment = new BolesaShipment({
             fulfillmentId: fulfillment.id,

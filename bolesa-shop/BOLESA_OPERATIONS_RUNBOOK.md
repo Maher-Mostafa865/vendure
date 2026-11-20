@@ -298,7 +298,7 @@ To refresh: run `testBolesaConnection` for the channel. A stale/null value is **
 3. From `apps/server`:
 
 ```bash
-npm run test:bolesa:sandbox-e2e
+BOLESA_SANDBOX_E2E=1 npm run test:bolesa:sandbox-e2e
 ```
 
-Uses `vendure-bolesa-test` only. Evidence: [SANDBOX_E2E_EXECUTION_REPORT.md](./SANDBOX_E2E_EXECUTION_REPORT.md).
+Runs the plugin Partner suite plus the full Shop → Fulfillment → Worker → Reconcile → COD → Cancel flow. Uses `vendure-bolesa-test` only. Latest status: **LOCAL FULL E2E PASS** (official remote Sandbox still **NOT VERIFIED**). Evidence: [SANDBOX_E2E_EXECUTION_REPORT.md](./SANDBOX_E2E_EXECUTION_REPORT.md).
