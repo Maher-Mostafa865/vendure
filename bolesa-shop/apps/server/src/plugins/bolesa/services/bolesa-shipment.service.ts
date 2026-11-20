@@ -42,6 +42,7 @@ import {
 } from '../types';
 import { decideCreateAwbGate, isValidPersistedOrderId } from '../util/create-awb-gate';
 import { minorToMajor } from '../util/money';
+import { partnerAddressLine } from '../util/partner-address-line';
 import {
     BolesaOpsSnapshot,
     formatOpsMetricLine,
@@ -1702,7 +1703,7 @@ export class BolesaShipmentService implements OnModuleInit {
                 phone: String(shipper.phone ?? '0000000000'),
                 country_code: String(shipper.country_code ?? 'EG'),
                 resolution_hash: String(shipper.resolution_hash ?? ''),
-                address_line: String(shipper.address_line ?? ''),
+                address_line: partnerAddressLine(String(shipper.address_line ?? '')),
                 email: shipper.email ? String(shipper.email) : undefined,
                 company_name: shipper.company_name ? String(shipper.company_name) : undefined,
                 sa_short_address: shipper.sa_short_address
@@ -1714,10 +1715,12 @@ export class BolesaShipmentService implements OnModuleInit {
                 phone: order.shippingAddress?.phoneNumber ?? '0000000000',
                 country_code: order.shippingAddress?.countryCode ?? 'EG',
                 resolution_hash: String(consigneeHash ?? ''),
-                address_line:
-                    [order.shippingAddress?.streetLine1, order.shippingAddress?.streetLine2]
-                        .filter(Boolean)
-                        .join(', ') || 'Address',
+                address_line: partnerAddressLine(
+                    order.shippingAddress?.streetLine1,
+                    order.shippingAddress?.streetLine2,
+                    order.shippingAddress?.city,
+                    order.shippingAddress?.province,
+                ),
                 email: order.customer?.emailAddress,
                 sa_short_address: (order.shippingAddress as any)?.customFields?.bolesaSaShortAddress
                     ? String((order.shippingAddress as any).customFields.bolesaSaShortAddress)

@@ -313,4 +313,4 @@ Runs the plugin Partner suite plus the full Shop → Fulfillment → Worker → 
 BOLESA_REMOTE_SANDBOX_E2E=1 npm run test:bolesa:remote-sandbox-e2e
 ```
 
-Connection suite requires `/me.test_mode=true` before any AWB create/cancel. Latest remote status: **OFFICIAL REMOTE SANDBOX E2E BLOCKED** until credentials are provided. Evidence: [SANDBOX_E2E_EXECUTION_REPORT.md](./SANDBOX_E2E_EXECUTION_REPORT.md).
+Connection suite requires `/me.test_mode=true` before any AWB create/cancel. Egypt staging Partner host `dev-egy.bolesa.net` is reachable for OpenAPI/`/me`, but local Account 5’s token is **not** accepted there. Latest remote status: **OFFICIAL REMOTE SANDBOX E2E BLOCKED** until a dedicated remote token with Sandbox identity is provided. Evidence: [SANDBOX_E2E_EXECUTION_REPORT.md](./SANDBOX_E2E_EXECUTION_REPORT.md).

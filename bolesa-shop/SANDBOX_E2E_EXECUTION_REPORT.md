@@ -6,82 +6,99 @@
 
 **Date:** 2026-11-20
 
+Bolesa Laravel project path used: `/home/maher/projects/0-Project-Storage-Station/bolesa-egy`  
+(note: `…/vendure/bolesa-eg` does not exist on disk)
+
 ---
 
-## A. Local Full E2E (baseline — complete)
+## A. Local Full E2E (baseline)
 
 | Area | Result |
 | --- | --- |
-| Local Partner connection (`127.0.0.1:8000`) | **PASS** |
-| Shop → Fulfillment → Outbox → Worker → AWB | **PASS** |
-| Local tracking / reconcile / COD settle | **PASS** (DELIVERED via local Partner DB fixture only) |
-| Local cancellation | **PASS** |
-| DB safety (`vendure-bolesa-test` only; `vendure-dev` untouched) | **PASS** |
+| Local Partner (`127.0.0.1:8000`) Shop → Worker → AWB → reconcile → COD → cancel | **PASS** |
+| DB safety (`vendure-bolesa-test`; `vendure-dev` untouched) | **PASS** |
 
-Environment: `local-partner-api`. Partner `/me` had `test_mode=false` on the local account; safety relied on the **local host allowlist**, not remote Sandbox identity. See prior evidence in `tmp/full-flow-e2e-evidence.json`.
+Local `/me` for Account 5: `test_mode=false`. Safety relied on the **local host allowlist**, not remote Sandbox identity.
 
 ---
 
-## B. Official remote Sandbox — inspection results
+## B. Account 5 discovery (local `bolesa_eg` only)
 
-| Prerequisite | Status |
+Sanitized findings (no secrets, no customer PII):
+
+| Item | Value |
 | --- | --- |
-| Official remote Sandbox API base URL | **MISSING** — not in repo, `.env`, or process env |
-| Sandbox Partner token (distinct from local) | **MISSING** — `.env.sandbox` is local-only (`127.0.0.1`) |
-| Account identity / permissions | **UNKNOWN** |
-| `/me` → `test_mode=true` (authoritative) | **NOT RUN** — no remote credentials |
-| Synthetic sender/recipient for remote | **UNKNOWN** |
-| Supported services / COD on remote | **UNKNOWN** |
-| Authorization to create/cancel remote test AWBs | **NOT GRANTED / NOT AVAILABLE** |
+| Local APP_ENV / APP_URL | `local` / `127.0.0.1` |
+| Account | id `5`, `account_no=DCL17884376997315`, class `DIRECT_CLIENT`, type `MAIN`, `approved=true`, `active=true`, `can_shipping_awb=true` |
+| Company | `Client Owner` (seed-style local account) |
+| Partner API | `partner_api_enabled=true` |
+| Shipping flags | `allow_cc_shipping=true`, COD AWBs present historically |
+| Subscription | `ACTIVE` plan `2`, ends ~2027-02 |
+| Users | user id `5`, **`test_mode=false`** |
+| Tokens | 3 rows; **1 active** (`vendure-sandbox-e2e`, prefix redacted); issuing a new token revokes the previous (unique active-per-account index) — **not regenerated** this run |
+| Webhooks | 1 active subscription (URL host redacted); secret not logged |
+| Local AWBs | 28 total (mix cc/cod; many READY FOR SHIPMENT / CANCELED; 0 delivered) |
+| Addresses | 25 rows; EG + SA city samples (Abdeen, Dokki, …) — usable as **city search hints**, not as remote credentials |
 
-Explicitly **not** treated as official remote Sandbox:
+### Environment determination
 
-- `http://127.0.0.1:8000/api/pcl/v1`
-- Local token in gitignored `.env.sandbox`
+| Question | Finding |
+| --- | --- |
+| Is local Account 5 also remote Account 5? | **Not proven.** Local DB only; no remote account id mapping in repo. |
+| Does a remote Partner API exist? | **Yes (staging):** `https://dev-egy.bolesa.net/api/pcl/v1` returns Partner OpenAPI + `/me` → `401` without token. `sa-api-st.bolesa.net` currently TLS **525**. |
+| Does Account 5 have an official remote Sandbox token? | **No.** Local token authenticates **only** on `127.0.0.1` (`/me` 200). Same token on `dev-egy.bolesa.net` → **`401 unauthenticated`**. |
+| Authoritative Sandbox signal | Partner `/me` exposes **`test_mode`** (user flag). Local Account 5 has `test_mode=false`. `test_mode` scopes AWBs via `TestModeScope`; it is **not** an environment hostname brand. |
+| Can Sandbox be provisioned from local Account 5 alone? | **No supported remote Sandbox provisioning** found. Client token issue/regenerate is per **local** account DB; regenerating would revoke the active local E2E token. |
 
-No production credentials were used. No remote state-changing calls were made.
+**Conclusion:** Account 5 resources fully support **local** Partner E2E. They do **not** yield a verified official remote Sandbox credential. Staging Partner host existence ≠ Sandbox identity.
 
 ---
 
 ## C. Official remote matrix
 
-| Area | Result | Evidence |
+| Area | Result | Notes |
 | --- | --- | --- |
-| Official Remote Sandbox connection | **BLOCKED** | No `.env.remote-sandbox`; no allowlisted remote host |
-| Remote Shop-to-AWB flow | **BLOCKED** | Blocked before mutating gate |
+| Official Remote Sandbox connection | **BLOCKED** | No remote token; local token rejected by staging |
+| Remote Shop-to-AWB | **BLOCKED** | Safety gate: no mutating calls without `/me.test_mode=true` |
 | Remote tracking/reconciliation | **BLOCKED** | — |
 | Remote COD | **BLOCKED** | — |
 | Remote cancellation | **BLOCKED** | — |
-| Independent Server/Worker vs remote | **BLOCKED** | — |
-| Database safety | **PASS** | No remote run; local rules unchanged; `vendure-dev` not written |
+| Independent Server/Worker (remote) | **BLOCKED** | — |
+| Database safety | **PASS** | No remote mutating run; `vendure-dev` not written |
+
+Non-mutating probes executed (no credentials on remote mutating paths):
+
+- `GET https://dev-egy.bolesa.net/api/pcl/v1/me` → `401` (endpoint live)
+- `GET https://dev-egy.bolesa.net/api/pcl/openapi.json` → `200`
+- Local token → local `/me` → `200`, `test_mode=false`
+- Local token → staging `/me` → `401`
+
+`.env.remote-sandbox` was **not** written (would be incomplete / unsafe without a remote Sandbox token that proves `test_mode=true`).
 
 ---
 
-## D. Preparatory work completed (no remote traffic)
+## D. Reusable from Account 5 / local E2E (for when remote creds arrive)
 
-| Item | Detail |
+| Asset | Reuse |
 | --- | --- |
-| Local host gate | Unchanged — still `127.0.0.1` / `localhost` only |
-| Remote host gate | **New** `assertOfficialRemoteSandboxHost` — https + explicit `BOLESA_REMOTE_SANDBOX_ALLOWED_HOSTS`; rejects local hosts |
-| Credentials file | Template `.env.remote-sandbox.example`; gitignored `.env.remote-sandbox` |
-| Identity rule | Mutating remote E2E requires `/me.test_mode === true` |
-| Opt-in suite | `npm run test:bolesa:remote-sandbox-e2e` (connection/identity only until authorized) |
+| Synthetic EG city search (`Nasr` / existing city names) | Yes, for remote city search once authenticated |
+| Local resolution hashes + service slug patterns from prior local E2E | Starting point only — **must re-resolve on remote** |
+| Vendure Shop → Worker harness | Yes (`vendure-bolesa-test`, remote host gate + identity checks) |
+| Local Partner token / Account 5 id | **Local E2E only** — not interchangeable with remote |
 
 ---
 
-## E. Verification (this update)
+## E. Safety gates (unchanged / strengthened)
 
-| Command | Result |
-| --- | --- |
-| `npm run test:bolesa` | **75** pass (includes remote host gate unit tests) |
-| `npm run typecheck` | pass |
-| `npm run test:bolesa:remote-sandbox-e2e` | connection suite **SKIP**; prerequisites **PASS** (creds absent) |
-| Local Full E2E | Not re-run; prior **PASS** preserved |
+- Local allowlist: `127.0.0.1` / `localhost` only (`assertSafePartnerHost`)
+- Remote allowlist: https + explicit `BOLESA_REMOTE_SANDBOX_ALLOWED_HOSTS` (`assertOfficialRemoteSandboxHost`)
+- Mutating remote E2E requires `/me.test_mode === true`
+- No production credentials used; no remote AWB create/cancel; no token regeneration
 
 ---
 
-## F. Final status declaration
+## F. Final status
 
-- **OFFICIAL REMOTE SANDBOX E2E BLOCKED** — official remote Sandbox URL, token, account identity, and create/cancel authorization are absent from this environment.
+- **OFFICIAL REMOTE SANDBOX E2E BLOCKED** — remote staging Partner API host is reachable, but Account 5 provides **no** remote Sandbox token, and local identity is `test_mode=false`.
 - **Local Full E2E:** **PASS**
 - **Production readiness:** **NOT APPROVED**

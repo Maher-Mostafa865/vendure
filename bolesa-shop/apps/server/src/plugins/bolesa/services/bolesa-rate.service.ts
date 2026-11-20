@@ -10,6 +10,7 @@ import {
 import { BOLESA_PLUGIN_OPTIONS, loggerCtx } from '../constants';
 import { BolesaPluginOptions, BolesaServiceOption, PaymentPreference, PersistedBolesaQuote } from '../types';
 import { majorToMinor, minorToMajor } from '../util/money';
+import { partnerAddressLine } from '../util/partner-address-line';
 import { BolesaConnectionService } from './bolesa-connection.service';
 import { BolesaClient } from './bolesa-client.service';
 
@@ -83,7 +84,7 @@ export class BolesaRateService {
                 phone: shipper.phone,
                 country_code: shipper.country_code ?? 'EG',
                 resolution_hash: shipper.resolution_hash,
-                address_line: shipper.address_line,
+                address_line: partnerAddressLine(shipper.address_line),
             },
             consignees: [
                 {
@@ -91,10 +92,12 @@ export class BolesaRateService {
                     phone: order.shippingAddress?.phoneNumber ?? '0000000000',
                     country_code: order.shippingAddress?.countryCode ?? 'EG',
                     resolution_hash: consigneeHash,
-                    address_line:
-                        [order.shippingAddress?.streetLine1, order.shippingAddress?.streetLine2]
-                            .filter(Boolean)
-                            .join(', ') || 'Address',
+                    address_line: partnerAddressLine(
+                        order.shippingAddress?.streetLine1,
+                        order.shippingAddress?.streetLine2,
+                        order.shippingAddress?.city,
+                        order.shippingAddress?.province,
+                    ),
                 },
             ],
         };

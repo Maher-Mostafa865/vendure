@@ -68,9 +68,18 @@ import { BolesaPluginOptions } from './types';
         pushUnique(config.customFields.Order, fields.Order, 'name');
         pushUnique(config.customFields.Fulfillment, fields.Fulfillment, 'name');
 
+        // RwPermissionDefinition does not expose `.name` on the instance. Comparing
+        // `(x as any).name` treated the 2nd definition as a duplicate (undefined ===
+        // undefined) and skipped BolesaShipment from the GraphQL Permission enum.
+        const permissionKey = (p: unknown): string =>
+            ((p as { getMetadata?: () => Array<{ name: string }> }).getMetadata?.() ?? [])
+                .map(m => m.name)
+                .sort()
+                .join(',');
         const perms = config.authOptions.customPermissions ?? [];
         for (const p of [bolesaConnectionPermission, bolesaShipmentPermission]) {
-            if (!perms.some(x => (x as any).name === (p as any).name || x === p)) {
+            const key = permissionKey(p);
+            if (!perms.some(x => x === p || permissionKey(x) === key)) {
                 perms.push(p);
             }
         }

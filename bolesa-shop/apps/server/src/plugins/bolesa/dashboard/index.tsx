@@ -68,36 +68,61 @@ const cancelMutation = `
   }
 `;
 
+async function adminApi<T = any>(query: string, variables?: Record<string, unknown>): Promise<T> {
+    // Always hit the Vendure Admin API on the same origin (works under /dashboard).
+    const res = await fetch(`${window.location.origin}/admin-api`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ query, variables }),
+    });
+    if (!res.ok) {
+        throw new Error(`Admin API HTTP ${res.status}`);
+    }
+    const json = await res.json();
+    if (json.errors?.length) {
+        throw new Error(json.errors.map((e: any) => e.message).join('; '));
+    }
+    return json.data as T;
+}
+
 function BolesaConnectionPage() {
     const qc = useQueryClient();
-    const { data, isLoading } = useQuery({
+    const { data, isLoading, error, refetch } = useQuery({
         queryKey: ['bolesaConnection'],
         queryFn: async () => {
-            const res = await fetch('/admin-api', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                credentials: 'include',
-                body: JSON.stringify({ query: connectionQuery }),
-            });
-            const json = await res.json();
-            return json.data?.bolesaConnection;
+            const d = await adminApi<{ bolesaConnection: any }>(connectionQuery);
+            return d.bolesaConnection;
         },
     });
     const test = useMutation({
         mutationFn: async () => {
-            const res = await fetch('/admin-api', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                credentials: 'include',
-                body: JSON.stringify({ query: testMutation }),
-            });
-            return (await res.json()).data?.testBolesaConnection;
+            const d = await adminApi<{ testBolesaConnection: any }>(testMutation);
+            return d.testBolesaConnection;
         },
         onSuccess: () => qc.invalidateQueries({ queryKey: ['bolesaConnection'] }),
     });
 
     if (isLoading) {
         return <div>Loading Bolesa connection…</div>;
+    }
+    if (error) {
+        return (
+            <div className="p-4 space-y-2">
+                <h2 className="text-lg font-medium">Bolesa Connection</h2>
+                <p className="text-destructive text-sm">
+                    Failed to load connection: {(error as Error).message}
+                </p>
+                <p className="text-muted-foreground text-sm">
+                    Open this page at <code>/dashboard/bolesa-connection</code> (not{' '}
+                    <code>/admin/extensions/…</code>), stay logged in, and ensure the Default
+                    channel is selected.
+                </p>
+                <Button type="button" onClick={() => refetch()}>
+                    Retry
+                </Button>
+            </div>
+        );
     }
     if (!data) {
         return (
