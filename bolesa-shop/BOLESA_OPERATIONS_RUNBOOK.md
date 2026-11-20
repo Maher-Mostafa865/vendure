@@ -301,4 +301,16 @@ To refresh: run `testBolesaConnection` for the channel. A stale/null value is **
 BOLESA_SANDBOX_E2E=1 npm run test:bolesa:sandbox-e2e
 ```
 
-Runs the plugin Partner suite plus the full Shop → Fulfillment → Worker → Reconcile → COD → Cancel flow. Uses `vendure-bolesa-test` only. Latest status: **LOCAL FULL E2E PASS** (official remote Sandbox still **NOT VERIFIED**). Evidence: [SANDBOX_E2E_EXECUTION_REPORT.md](./SANDBOX_E2E_EXECUTION_REPORT.md).
+Runs the plugin Partner suite plus the full Shop → Fulfillment → Worker → Reconcile → COD → Cancel flow against the **local** Partner allowlist. Uses `vendure-bolesa-test` only. Local status: **LOCAL FULL E2E PASS**.
+
+### Official remote Sandbox (separate)
+
+1. Copy `.env.remote-sandbox.example` → gitignored `.env.remote-sandbox`.
+2. Set the official https Sandbox base URL, Sandbox `XP-Api-Token`, and `BOLESA_REMOTE_SANDBOX_ALLOWED_HOSTS` (hostname only). Do **not** reuse local `.env.sandbox`.
+3. From `apps/server`:
+
+```bash
+BOLESA_REMOTE_SANDBOX_E2E=1 npm run test:bolesa:remote-sandbox-e2e
+```
+
+Connection suite requires `/me.test_mode=true` before any AWB create/cancel. Latest remote status: **OFFICIAL REMOTE SANDBOX E2E BLOCKED** until credentials are provided. Evidence: [SANDBOX_E2E_EXECUTION_REPORT.md](./SANDBOX_E2E_EXECUTION_REPORT.md).

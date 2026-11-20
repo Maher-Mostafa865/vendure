@@ -1,121 +1,87 @@
 # Sandbox E2E Execution Report
 
-**Final status: LOCAL FULL E2E PASS**
-
-**Date:** 2026-11-20  
-**Environment identity:** `local-partner-api` (`http://127.0.0.1:8000/api/pcl/v1`)  
-**Vendure DB:** `vendure-bolesa-test` only  
-**Official remote Bolesa Sandbox:** **NOT VERIFIED**  
+**Official remote status: OFFICIAL REMOTE SANDBOX E2E BLOCKED**  
+**Local Full E2E:** **PASS** (unchanged)  
 **Production readiness:** **NOT APPROVED**
 
-This run completed the real Vendure Shop → Fulfillment → Outbox → Worker → Partner → Reconcile → COD settle → Cancel path against the **allowlisted local Partner host**. It is **not** an official remote Bolesa Sandbox verification. Partner `/me` reported `test_mode=false` on this local account; safety relied on the host allowlist and isolated test DB.
+**Date:** 2026-11-20
 
 ---
 
-## 1. Status matrix
+## A. Local Full E2E (baseline — complete)
 
-| Area | Result | Required evidence (sanitized) |
-| --- | --- | --- |
-| Partner connection | **PASS** | Real HTTP to `127.0.0.1:8000`; `/me` + configuration OK |
-| Shop checkout | **PASS** | Shop API cart → address → Bolesa shipping → payment → order `9CDTZ5L57LBF92TQ` / COD `LFWQUPCPZKSZMB7A` |
-| Shipping | **PASS** | Bolesa shipping method selected; `shippingPrice=1140` (minor units) |
-| Fulfillment | **PASS** | Real `OrderService.createFulfillment` → Bolesa fulfillment handler (`fulfillmentId` 9 / 10) |
-| Outbox | **PASS** | `bolesa_shipment` row `shipmentKey=bolesa-f9-c9`, `syncStatus=requested`, job `4361` `PENDING` before Worker |
-| Worker | **PASS** | Real `bootstrapWorker`; queue `bolesa-create-awb` job `4361` → `COMPLETED` |
-| AWB | **PASS** | Partner AWB `1387511730` bound to order `15` / channel `9` / fulfillment `9` |
-| Reconciliation | **PASS** | Actual `bolesa-reconcile-shipments` via `ScheduledTask.execute`; `checked=1` |
-| Tracking | **PASS** | Reconcile applied Partner status → Vendure `statusCode=DELIVERED` |
-| COD | **PASS** | Payment `Authorized` amount `11140` → after DELIVERED `Settled` once; no double-settle |
-| Cancellation | **PASS** | Prepaid path: `requestCancel` → `bolesa-cancel-awb` → `syncStatus=canceled` (AWB `1387511730`) |
-| Idempotency | **PASS** | Single tracking row per fulfillment (`trackingRowsForFulfillment=1`) |
-| Tenant isolation | **PASS** | Cross-channel leakage `0` |
-| DB safety | **PASS** | Writes only to `vendure-bolesa-test`; `vendure-dev` channels=`1`, orders=`1` unchanged |
-
----
-
-## 2. Full-flow evidence (latest run)
-
-Source: `tmp/full-flow-e2e-evidence.json` (gitignored).
-
-| Field | Value |
+| Area | Result |
 | --- | --- |
-| Partner host | `127.0.0.1:8000` |
-| Channel | `9` |
-| Prepaid order | `15` / `9CDTZ5L57LBF92TQ` |
-| Shipping price | `1140` |
-| Consignee / shipper hash | `63f280b2…` / `4c227995…` (resolution hashes, no PII) |
-| Outbox shipment | id `244`, key `bolesa-f9-c9`, initial `requested` |
-| Create job | id `4361`, `PENDING` → `COMPLETED`, queue `bolesa-create-awb` |
-| Prepaid AWB | `1387511730` → canceled |
-| COD order | `16` / `LFWQUPCPZKSZMB7A` |
-| COD payment | id `12`, `Authorized` → `Settled`, amount `11140` |
-| COD AWB | `5420616036`, `codAmount=111.4` |
-| Reconcile | task `bolesa-reconcile-shipments`, `checked=1`, `durationMs≈409` |
-| Double-settle | Settled count remained `1` |
+| Local Partner connection (`127.0.0.1:8000`) | **PASS** |
+| Shop → Fulfillment → Outbox → Worker → AWB | **PASS** |
+| Local tracking / reconcile / COD settle | **PASS** (DELIVERED via local Partner DB fixture only) |
+| Local cancellation | **PASS** |
+| DB safety (`vendure-bolesa-test` only; `vendure-dev` untouched) | **PASS** |
 
-### COD DELIVERED fixture note
-
-Local Partner has no safe public API to force `DELIVERED` for test AWBs. The suite updates `bolesa_eg.shipping_awbs.status_code` for the **test AWB only** (`account_id=5`), then runs the **real** registered reconcile task so Vendure applies tracking and settles COD. This is a deterministic local fixture exercising the actual reconciliation path — not a faked Partner HTTP success stub.
+Environment: `local-partner-api`. Partner `/me` had `test_mode=false` on the local account; safety relied on the **local host allowlist**, not remote Sandbox identity. See prior evidence in `tmp/full-flow-e2e-evidence.json`.
 
 ---
 
-## 3. Prior Partner API baseline (still valid)
+## B. Official remote Sandbox — inspection results
 
-Direct real HTTP cases from the earlier partial run remain green: `/me`, configuration, city search, service options, quote, AWB create/get/tracking, idempotency, cancel. Plugin service-level sandbox suite also still passes.
+| Prerequisite | Status |
+| --- | --- |
+| Official remote Sandbox API base URL | **MISSING** — not in repo, `.env`, or process env |
+| Sandbox Partner token (distinct from local) | **MISSING** — `.env.sandbox` is local-only (`127.0.0.1`) |
+| Account identity / permissions | **UNKNOWN** |
+| `/me` → `test_mode=true` (authoritative) | **NOT RUN** — no remote credentials |
+| Synthetic sender/recipient for remote | **UNKNOWN** |
+| Supported services / COD on remote | **UNKNOWN** |
+| Authorization to create/cancel remote test AWBs | **NOT GRANTED / NOT AVAILABLE** |
+
+Explicitly **not** treated as official remote Sandbox:
+
+- `http://127.0.0.1:8000/api/pcl/v1`
+- Local token in gitignored `.env.sandbox`
+
+No production credentials were used. No remote state-changing calls were made.
 
 ---
 
-## 4. Implementation notes from this continuation
+## C. Official remote matrix
 
-- Dual in-process `bootstrap` + `bootstrapWorker` for isolated E2E (no `DefaultSchedulerPlugin` in that harness — croner name collision); reconcile still uses the real `bolesaReconcileTask` registered by `BolesaPlugin`.
-- `ScheduledTask.execute` takes the Nest injector/`app` directly (`.get`), not `{ injector }`.
-- Catalog/shipping/COD methods seeded into `vendure-bolesa-test` only via `seedFullE2eCatalog`.
-- Fulfillment handler reloads `order.lines` before creating the outbox row.
-- Host allowlist (`assertSafePartnerHost`) unchanged.
+| Area | Result | Evidence |
+| --- | --- | --- |
+| Official Remote Sandbox connection | **BLOCKED** | No `.env.remote-sandbox`; no allowlisted remote host |
+| Remote Shop-to-AWB flow | **BLOCKED** | Blocked before mutating gate |
+| Remote tracking/reconciliation | **BLOCKED** | — |
+| Remote COD | **BLOCKED** | — |
+| Remote cancellation | **BLOCKED** | — |
+| Independent Server/Worker vs remote | **BLOCKED** | — |
+| Database safety | **PASS** | No remote run; local rules unchanged; `vendure-dev` not written |
 
 ---
 
-## 5. Verification commands
+## D. Preparatory work completed (no remote traffic)
+
+| Item | Detail |
+| --- | --- |
+| Local host gate | Unchanged — still `127.0.0.1` / `localhost` only |
+| Remote host gate | **New** `assertOfficialRemoteSandboxHost` — https + explicit `BOLESA_REMOTE_SANDBOX_ALLOWED_HOSTS`; rejects local hosts |
+| Credentials file | Template `.env.remote-sandbox.example`; gitignored `.env.remote-sandbox` |
+| Identity rule | Mutating remote E2E requires `/me.test_mode === true` |
+| Opt-in suite | `npm run test:bolesa:remote-sandbox-e2e` (connection/identity only until authorized) |
+
+---
+
+## E. Verification (this update)
 
 | Command | Result |
 | --- | --- |
-| `npm run test:bolesa` | **69** pass |
-| `npm run test:bolesa:integration` | **28** pass (sandbox suites skipped without flag) |
-| `npm run test:bolesa:sandbox-e2e` | **8** pass (5 plugin + 3 full-flow) |
+| `npm run test:bolesa` | **75** pass (includes remote host gate unit tests) |
 | `npm run typecheck` | pass |
-| `npm run build:server` | pass |
-
-Opt-in: `BOLESA_SANDBOX_E2E=1` + gitignored `bolesa-shop/.env.sandbox`.
-
----
-
-## 6. Safety
-
-- Vendure writes: `vendure-bolesa-test` only (asserted before bootstrap).
-- `vendure-dev` untouched (read-only check: channels=`1`, orders=`1`).
-- No TypeORM `synchronize`; no destructive migrations; no production credentials.
-- Partner traffic limited to explicit local host allowlist.
-- Synthetic EG addresses / hashes only; secrets not logged.
+| `npm run test:bolesa:remote-sandbox-e2e` | connection suite **SKIP**; prerequisites **PASS** (creds absent) |
+| Local Full E2E | Not re-run; prior **PASS** preserved |
 
 ---
 
-## 7. Files (this continuation)
+## F. Final status declaration
 
-| Path | Role |
-| --- | --- |
-| `tests/integration/full-flow-e2e.integration.spec.ts` | Shop → Worker → reconcile → COD → cancel E2E |
-| `tests/integration/full-e2e-helpers.ts` | Seed, Shop/Admin GraphQL, Partner status fixture |
-| `tests/idempotency-key.spec.ts` | Idempotency key format regression |
-| `bolesa.plugin.ts` | Idempotent dual-bootstrap-safe registration |
-| `bolesa-fulfillment-handler.ts` | Reload lines; real outbox enqueue path |
-| `package.json` | `test:bolesa:sandbox-e2e` includes full-flow suite |
-
-Gitignored: `.env.sandbox`, `tmp/*`.
-
----
-
-## 8. Final status declaration
-
-- **LOCAL FULL E2E PASS** — Entire Vendure Shop → Fulfillment → Worker → Partner → Reconcile → COD settle → Cancel flow passed against the local Partner API.
-- **Official remote Bolesa Sandbox:** **NOT VERIFIED**
-- **Production readiness:** **NOT APPROVED** (requires separate production audit, remote sandbox credentials, and ops sign-off).
+- **OFFICIAL REMOTE SANDBOX E2E BLOCKED** — official remote Sandbox URL, token, account identity, and create/cancel authorization are absent from this environment.
+- **Local Full E2E:** **PASS**
+- **Production readiness:** **NOT APPROVED**

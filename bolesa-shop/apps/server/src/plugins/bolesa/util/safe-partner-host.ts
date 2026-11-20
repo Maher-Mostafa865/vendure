@@ -1,6 +1,7 @@
 /**
- * Blocks Partner API calls to hosts that are not explicitly local/sandbox.
- * Production Partner hosts must never be used by E2E or automated harnesses.
+ * Local Partner E2E host gate only (`127.0.0.1` / `localhost`).
+ * Official remote Sandbox uses {@link assertOfficialRemoteSandboxHost} instead.
+ * Do not add production or remote hosts here.
  */
 const ALLOWED_HOSTS = new Set(['127.0.0.1', 'localhost']);
 
