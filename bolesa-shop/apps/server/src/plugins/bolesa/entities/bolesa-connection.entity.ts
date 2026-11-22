@@ -40,6 +40,21 @@ export class BolesaConnection extends VendureEntity implements ChannelAware {
     @Column({ type: 'varchar', length: 128, nullable: true })
     defaultServiceSlug: string | null;
 
+    /** Partner slugs the shopper may choose. Empty means every priced service. */
+    @Column({ type: 'simple-json', nullable: true })
+    enabledServiceSlugs: string[] | null;
+
+    /** Sent as Partner allow_open on price comparison and AWB create. */
+    @Column({ type: 'boolean', default: false })
+    allowOpen: boolean;
+
+    /**
+     * When true, a Bolesa fulfillment is created after payment is ready.
+     * The AWB itself is still queued after that fulfillment commits.
+     */
+    @Column({ type: 'boolean', default: false })
+    autoCreateAwb: boolean;
+
     @Column({ type: 'varchar', length: 16, default: 'dry' })
     shipmentCategory: 'dry' | 'heavy' | 'cold';
 

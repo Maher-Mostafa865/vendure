@@ -99,6 +99,8 @@ export interface BolesaCreateAwbInput {
     shipper: BolesaInlineAddress;
     consignee: BolesaInlineAddress;
     description?: string;
+    /** Merchant policy. Omitted Partner requests leave the open fee at 0. */
+    allowOpen?: boolean;
     meta: Record<string, string | number | boolean>;
     parcels?: Array<{ actual_weight?: number; weight?: number }>;
 }

@@ -296,4 +296,72 @@ describe('BolesaClient', () => {
         assert.equal(seenHeaders['XP-Api-Token'], 'test-token');
         assert.equal(seenHeaders['Idempotency-Key'], 'f42-a1');
     });
+
+    it('sends allow_open on AWB create and lists account services without using their prices', async () => {
+        originalFetch = globalThis.fetch;
+        const bodies: unknown[] = [];
+        globalThis.fetch = mock.fn(async (url: string, init?: RequestInit) => {
+            if (init?.body) {
+                bodies.push(JSON.parse(String(init.body)));
+            }
+            const list = String(url).endsWith('/services');
+            return {
+                ok: true,
+                status: 200,
+                text: async () =>
+                    JSON.stringify(
+                        list
+                            ? {
+                                  success: true,
+                                  data: {
+                                      services: [
+                                          {
+                                              slug: 'bosta_egy_dom_dry_std_dlv',
+                                              labels: { en: 'Bosta' },
+                                              cc_price: null,
+                                              cod_price: null,
+                                          },
+                                      ],
+                                  },
+                              }
+                            : { success: true, data: { awbs: [{ tracking_number: 'TN1' }] } },
+                    ),
+                headers: new Headers(),
+            };
+        }) as unknown as typeof fetch;
+        const client = new BolesaClient({ apiBaseUrl: auth.apiBaseUrl, encryptionSecret: 'x' });
+        const listed = await client.listAccountServices(auth);
+        assert.deepEqual(listed, [{ slug: 'bosta_egy_dom_dry_std_dlv', name: 'Bosta', logoUrl: undefined }]);
+        await client.createAwb(
+            auth,
+            {
+                orderNumber: 'T1',
+                carrierServiceSlug: 'bosta_egy_dom_dry_std_dlv',
+                shipmentType: 'domestic',
+                shipmentOperation: 'ship',
+                shipmentCategory: 'dry',
+                paymentType: 'cc',
+                weightKg: 1,
+                allowOpen: true,
+                shipper: {
+                    name: 'A',
+                    phone: '1',
+                    country_code: 'EG',
+                    resolution_hash: 'h1',
+                    address_line: 'x',
+                },
+                consignee: {
+                    name: 'B',
+                    phone: '2',
+                    country_code: 'EG',
+                    resolution_hash: 'h2',
+                    address_line: 'y',
+                },
+                meta: { vendure_shipment_key: 'f1' },
+            },
+            'f1-a1',
+        );
+        assert.equal((bodies[0] as any).allow_open, true);
+        assert.equal((bodies[0] as any).cod_amount, undefined);
+    });
 });

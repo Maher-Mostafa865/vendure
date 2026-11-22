@@ -20,6 +20,12 @@ export class BolesaAdminResolver {
     }
 
     @Query()
+    @Allow(bolesaConnectionPermission.Read)
+    async bolesaAccountServices(@Ctx() ctx: RequestContext) {
+        return this.connectionService.listAccountServices(ctx);
+    }
+
+    @Query()
     @Allow(bolesaShipmentPermission.Read)
     async bolesaShipments(
         @Ctx() ctx: RequestContext,

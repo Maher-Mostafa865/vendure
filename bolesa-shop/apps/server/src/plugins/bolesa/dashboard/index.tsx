@@ -1,5 +1,6 @@
 import { api, Button, defineDashboardExtension } from '@vendure/dashboard';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useEffect, useState } from 'react';
 
 /**
  * Phase 1 Dashboard hooks:
@@ -22,6 +23,27 @@ const connectionQuery = `
       codEnabled
       codFeeMode
       labelNote
+      allowOpen
+      autoCreateAwb
+      defaultServiceSlug
+      enabledServiceSlugs
+    }
+  }
+`;
+
+const servicesQuery = `
+  query BolesaAccountServices {
+    bolesaAccountServices { slug name logoUrl }
+  }
+`;
+
+const settingsMutation = `
+  mutation UpdateBolesaSettings($input: UpdateBolesaConnectionInput!) {
+    updateBolesaConnection(input: $input) {
+      allowOpen
+      autoCreateAwb
+      defaultServiceSlug
+      enabledServiceSlugs
     }
   }
 `;
@@ -146,13 +168,14 @@ function BolesaConnectionPage() {
                 <dd>{data.lastVerifiedAt ?? '—'}</dd>
             </dl>
             <p className="text-sm text-muted-foreground">{data.labelNote}</p>
+            <MerchantSettings connection={data} />
             <p className="text-sm text-muted-foreground">
                 Bolesa prices are charged only when Partner <code>price.currency</code> matches this
                 channel currency. Egypt deployments use EGP. Saudi deployments use SAR. There is no
                 exchange rate. A mismatch hides bolesa-shipping and leaves the other shipping methods
-                in place. An AWB is created after a Bolesa fulfillment is saved, not when the order is
-                placed. Prepaid is sent as <code>cc</code> with no COD collection. COD sends{' '}
-                <code>cod_amount</code> as the order total. Allow-open stays off.
+                in place. Prepaid is sent as <code>cc</code> with no COD collection. COD sends{' '}
+                <code>cod_amount</code> as the order total. Automatic creation adds the fulfillment
+                after payment is ready; the AWB is still sent by the background job.
             </p>
             <Button type="button" onClick={() => test.mutate()} disabled={test.isPending}>
                 Test connection
@@ -161,6 +184,135 @@ function BolesaConnectionPage() {
                 <p className="text-sm">{test.data.ok ? 'OK' : 'Failed'}: {test.data.message}</p>
             )}
         </div>
+    );
+}
+
+function MerchantSettings({ connection }: { connection: any }) {
+    const qc = useQueryClient();
+    const services = useQuery({
+        queryKey: ['bolesaAccountServices'],
+        queryFn: async () => {
+            const d = await adminApi<{ bolesaAccountServices: Array<{ slug: string; name: string }> }>(
+                servicesQuery,
+            );
+            return d.bolesaAccountServices ?? [];
+        },
+    });
+    const [allowOpen, setAllowOpen] = useState(connection.allowOpen === true);
+    const [autoCreateAwb, setAutoCreateAwb] = useState(connection.autoCreateAwb === true);
+    const [enabled, setEnabled] = useState<string[]>(connection.enabledServiceSlugs ?? []);
+    const [defaultSlug, setDefaultSlug] = useState<string>(connection.defaultServiceSlug ?? '');
+    useEffect(() => {
+        setAllowOpen(connection.allowOpen === true);
+        setAutoCreateAwb(connection.autoCreateAwb === true);
+        setEnabled(connection.enabledServiceSlugs ?? []);
+        setDefaultSlug(connection.defaultServiceSlug ?? '');
+    }, [connection]);
+    const save = useMutation({
+        mutationFn: async () => {
+            const d = await adminApi<{ updateBolesaConnection: any }>(settingsMutation, {
+                input: {
+                    allowOpen,
+                    autoCreateAwb,
+                    defaultServiceSlug: defaultSlug || null,
+                    enabledServiceSlugs: enabled,
+                },
+            });
+            return d.updateBolesaConnection;
+        },
+        onSuccess: () => qc.invalidateQueries({ queryKey: ['bolesaConnection'] }),
+    });
+    const catalog = services.data ?? [];
+    const choices = enabled.length ? catalog.filter(row => enabled.includes(row.slug)) : catalog;
+    const needsDefault = autoCreateAwb && !defaultSlug;
+    function toggle(slug: string) {
+        setEnabled(current => {
+            const next = current.includes(slug) ? current.filter(item => item !== slug) : [...current, slug];
+            if (defaultSlug && !next.includes(defaultSlug)) {
+                setDefaultSlug('');
+            }
+            return next;
+        });
+    }
+    return (
+        <form
+            className="space-y-3 border rounded-md p-3"
+            onSubmit={event => {
+                event.preventDefault();
+                save.mutate();
+            }}
+        >
+            <h3 className="text-sm font-medium">Shipment settings</h3>
+            <label className="flex items-center gap-2 text-sm">
+                <input type="checkbox" checked={allowOpen} onChange={event => setAllowOpen(event.target.checked)} />
+                Allow the customer to open the shipment
+            </label>
+            {allowOpen && (
+                <p className="text-sm text-destructive">
+                    Bosta services (slug starts with bosta_) need at least one public product photo URL.
+                    Without it, AWB creation stops with allow_open_images_required and no shipment is booked.
+                    Other carriers that do not allow opening the parcel are rejected by Bolesa with allow_open_unavailable.
+                </p>
+            )}
+            <label className="flex items-center gap-2 text-sm">
+                <input
+                    type="checkbox"
+                    checked={autoCreateAwb}
+                    onChange={event => setAutoCreateAwb(event.target.checked)}
+                />
+                Create the Bolesa fulfillment automatically after payment
+            </label>
+            <div className="space-y-1">
+                <p className="text-sm">Services customers can choose</p>
+                {services.isLoading && <p className="text-sm text-muted-foreground">Loading services…</p>}
+                {services.error && (
+                    <p className="text-sm text-destructive">{(services.error as Error).message}</p>
+                )}
+                {!services.isLoading && !catalog.length && (
+                    <p className="text-sm text-muted-foreground">No services returned for this account.</p>
+                )}
+                <div className="space-y-1">
+                    {catalog.map(row => (
+                        <label key={row.slug} className="flex items-center gap-2 text-sm">
+                            <input
+                                type="checkbox"
+                                checked={enabled.includes(row.slug)}
+                                onChange={() => toggle(row.slug)}
+                            />
+                            {row.name} <span className="text-muted-foreground">{row.slug}</span>
+                        </label>
+                    ))}
+                </div>
+                <p className="text-xs text-muted-foreground">
+                    Leave every box unchecked to offer all priced services. Checking any box limits checkout to those services.
+                </p>
+            </div>
+            <label className="block text-sm space-y-1">
+                <span>Default service</span>
+                <select
+                    className="border rounded px-2 py-1 w-full bg-background"
+                    value={defaultSlug}
+                    onChange={event => setDefaultSlug(event.target.value)}
+                >
+                    <option value="">None</option>
+                    {choices.map(row => (
+                        <option key={row.slug} value={row.slug}>
+                            {row.name}
+                        </option>
+                    ))}
+                </select>
+            </label>
+            {needsDefault && (
+                <p className="text-sm text-destructive">
+                    Automatic creation needs a default service. It is used when the customer does not pick one, and it is not replaced if it cannot be quoted.
+                </p>
+            )}
+            <Button type="submit" disabled={save.isPending || needsDefault}>
+                Save settings
+            </Button>
+            {save.error && <p className="text-sm text-destructive">{(save.error as Error).message}</p>}
+            {save.isSuccess && <p className="text-sm">Saved.</p>}
+        </form>
     );
 }
 

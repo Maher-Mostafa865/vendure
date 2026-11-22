@@ -110,3 +110,19 @@ Not a sandbox run. No remote AWB was created or cancelled. `vendure-dev` was not
 Code now refuses to charge a Partner shipping amount unless `price.currency` equals the Vendure channel currency. Egypt Partner config is EGP. Saudi Partner config is SAR. The `$` checkout symbol is the channel currency, not a Partner currency. Details and the AWB trigger decision are in `BOLESA_VENDURE_SHIPPING_ARCHITECTURE_REVIEW.md`.
 
 The path `/home/maher/projects/0-Project-Storage-Station/bolesa-egy` from the 2026-11-20 note is not on this machine. The Partner tree used here is `/home/maher/Projects/bolesa-egy`.
+
+## H. 2026-11-22 COD handler and currency precision
+
+Not a sandbox run. No remote AWB was created. `vendure-dev` was not written.
+
+COD for automatic fulfillment and for the AWB is the channel PaymentMethod handler `bolesa-cod`, not `order.customFields.paymentPreference`. Prepaid payments still wait for `PaymentSettled`. COD still waits for `PaymentAuthorized` and is not settled by that transition.
+
+Money conversion uses `moneyStrategy.precision` (default 2). Unit tests cover precision 0, 2, and 3.
+
+Integration and local sandbox E2E were not executed. Missing together:
+
+- `bolesa-shop/apps/server/.env.test`
+- PostgreSQL database `vendure-bolesa-test` (only `vendure-dev` exists on `localhost:5432`; port `6543` from the 2026-11-20 run is not the current server)
+- `bolesa-shop/.env.sandbox`
+
+Those files were not invented, and `vendure-dev` was not copied or migrated.

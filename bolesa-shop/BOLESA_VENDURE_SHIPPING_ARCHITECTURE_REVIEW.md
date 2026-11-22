@@ -66,7 +66,13 @@ The customer selection is `setOrderShippingMethod`. A Bolesa carrier choice is `
 
 ## CC and COD
 
-Payment preference is the order field `paymentPreference`: empty or `prepaid` means CC; `cod` means COD. The calculator runs at `eligibleShippingMethods`, which is **before** payment in the current checkout. Changing the preference later requires another eligibility call so the quote is rebuilt. The cache key includes the preference.
+Checkout rates still use `paymentPreference`, because `eligibleShippingMethods` runs before a payment exists. Empty or `prepaid` means CC; `cod` means COD. Changing it later requires another eligibility call. The cache key includes the preference.
+
+Automatic fulfillment and the AWB do not use that field once a payment exists. The source of truth is the PaymentMethod handler stored for `Payment.method` in the current channel:
+
+- Handler code `bolesa-cod` and state `Authorized` or `Settled` means COD.
+- Any other successful payment means prepaid.
+- Client metadata, including a forged `metadata.method`, is ignored. The `bolesa-cod` handler itself returns `Authorized` and does not settle. Settlement stays on the existing DELIVERED reconciliation path. Partner `codRemittanceStatus` stays separate.
 
 | | Prepaid (`cc`) | COD (`cod`) |
 | --- | --- | --- |
@@ -82,15 +88,37 @@ Payment preference is the order field `paymentPreference`: empty or `prepaid` me
 
 COD collection fee and markup are applied in `BolesaRateService.buildQuote`. AWB `cod_amount` is the Vendure order total in major units. Those two numbers are intentionally different. Because a mismatched currency never becomes the shipping line, the order total and `cod_amount` stay in one currency.
 
-`allow_open` is not sent. Partner treats that as false. Turning it on for Bosta requires public product image URLs (`allow_open_images_required`). That is not enabled.
+`allow_open` is the channel setting `allowOpen` (default false). The same value is sent on `POST /services/options` and on AWB create. Omitting it would leave the open fee at 0, which would not match a merchant who turned the setting on. Bosta still rejects `allow_open` without public product image URLs (`allow_open_images_required`). The setting is not forced back to false; that rejection is stored on the shipment.
+
+## Merchant settings
+
+Stored on `bolesa_connection` for the channel, edited on the Bolesa Connection page, and saved through `updateBolesaConnection`:
+
+- `allowOpen` — Partner `allow_open`. Default false.
+- `autoCreateAwb` — when true, the plugin creates the Vendure fulfillment itself. Default false, so existing connections stay manual.
+- `enabledServiceSlugs` — Partner slugs the customer may see. Empty means every priced, currency-matching service. A non-empty list is checked against `GET /pcl/v1/services` before save. Those catalogue prices are not checkout prices.
+- `defaultServiceSlug` — required when automatic creation is on, and it must be in the enabled list. It is used only when the customer did not choose a service. An unavailable default is an error. Another carrier is not substituted.
+
+The customer's choice stays on `order.customFields.bolesaServiceSlug`. One `bolesa-shipping` method still carries every offered carrier in `metadata.options`. Standard and Express are separate methods and stay listed when Bolesa cannot quote.
 
 ## AWB lifecycle — decision
 
-**Automatic means: after a Bolesa fulfillment row is committed, the plugin writes an outbox row and enqueues `bolesa-create-awb`. The worker calls Partner outside the database transaction. The merchant does not click a second "send" for the happy path. Admin retry remains for `failed` and `retry_exhausted`.**
+**The Partner call stays after a Bolesa fulfillment is committed: outbox row, then `bolesa-create-awb`, then the worker. Nothing in the order transaction calls Partner.**
 
-The connection column `creationMode` (`manual` | `onPaymentSettled` | `onPlaced`, default `manual`) is stored and exposed on the Admin API. **No code reads it to create an AWB.** It is not a working switch.
+`autoCreateAwb` decides who creates that fulfillment:
 
-AWBs are not created when the order is placed. `OrderPlaced` only stores `customFields.bolesaQuote`. `quotePersisted=false` in the calculator log is expected: the calculator does not write the quote. A missing quote does not block the AWB. Create uses the order's `bolesaServiceSlug`, then the shipping-method slug, then `auto`. Partner prices the AWB again from the create body. Vendure does not send a quote hash.
+- false: the merchant fulfills from the dashboard, as before. No AWB is created on order placement.
+- true: after the order is allowed to ship, `maybeAutoFulfill` creates the fulfillment with handler `bolesa-fulfillment`. A `bolesa-cod` payment fulfills on `PaymentAuthorized` only. Every other successful payment fulfills on `PaymentSettled`. A COD order that later settles does not fulfill again. An existing Bolesa fulfillment blocks a second one. Orders that did not use the Bolesa calculator are left alone. If the selected or default slug is missing or not enabled, an order note is written and no fulfillment is created.
+
+`creationMode` is still unused. `autoCreateAwb` is the switch.
+
+`OrderPlaced` only stores `customFields.bolesaQuote`. Create uses the customer slug, then `defaultServiceSlug`, then a stored quote. A quote written from an `auto` method cannot replace the default. `auto` and `default` are not sent to Partner. A missing slug fails the outbox row instead of picking another service.
+
+## Currency precision
+
+Partner `cc_price` and `cod_price` are major units of `price.currency`. Vendure stores one integer scale for every currency: `entityOptions.moneyStrategy.precision`. `DefaultMoneyStrategy` is 2. The precision is not an ISO-4217 minor-unit table, so a currency code does not by itself select 0, 2, or 3 decimals.
+
+Conversion is `round(major × 10^precision)` and the reverse for `cod_amount`. Precision 0, 2, and 3 are covered by unit tests. A missing Partner currency or a currency that is not the channel currency still omits the Bolesa method. No exchange rate is applied.
 
 Partner HTTP runs after the fulfillment transaction, in `BolesaShipmentService.createAwbForFulfillment`. Idempotency-Key is `bolesa-f{fulfillmentId}-c{channelId}-a{attempt}`. A second event for the same fulfillment does not insert another outbox row. A cancelled fulfillment is blocked until Partner confirms cancel.
 
@@ -99,13 +127,13 @@ Creating an AWB at order placement was rejected: the customer can abandon paymen
 ## Known limits that need a business decision
 
 1. Channel currency must be set to EGP (this Egypt Partner) or SAR (a Saudi Partner). No FX rate will be invented.
-2. `creationMode` is not implemented. Say if `onPaymentSettled` should create the fulfillment itself.
-3. `allow_open` stays off until product image URLs are part of the order.
+2. `creationMode` is still unused. Use `autoCreateAwb`.
+3. `allowOpen` is sent, but Bosta still needs public image URLs before that carrier will accept an openable shipment.
 4. Checkout still quotes prepaid unless `paymentPreference` is already `cod`. Selecting COD after the shipping step must recalculate rates.
 5. Catalog prices entered as dollars stay dollars if the channel currency is changed to EGP or SAR. That is a catalog decision, not a shipping conversion.
 
 ## Tests
 
-Unit coverage added in `shipping-quote.spec.ts`, `rate-and-cod.spec.ts`, and `bolesa-client.spec.ts`: matching currency, SAR against an EGP channel, missing currency, zero price, null price, minor-unit rounding (existing `money.spec.ts`), and cache-key currency. A Partner HTTP error still returns `undefined` for this method only.
+Unit coverage includes the handler-based COD decision (`payment-kind.spec.ts`, using `bolesaCodPaymentHandler` and `dummyPaymentHandler`), precision 0/2/3 (`money.spec.ts`), currency match, and the rule that a stored auto quote does not replace the default service. A Partner HTTP error still returns `undefined` for this method only.
 
 Remote sandbox was not run. See `SANDBOX_E2E_EXECUTION_REPORT.md`.

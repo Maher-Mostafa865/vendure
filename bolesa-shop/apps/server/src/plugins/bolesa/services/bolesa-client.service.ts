@@ -74,6 +74,21 @@ export class BolesaClient {
         return this.request(auth, 'GET', '/me');
     }
 
+    /** GET /services. Catalogue only — prices here are not checkout prices. */
+    async listAccountServices(
+        auth: BolesaRequestAuth,
+    ): Promise<Array<{ slug: string; name: string; logoUrl?: string }>> {
+        const data = await this.request<any>(auth, 'GET', '/services');
+        const rows = (data?.services ?? []) as any[];
+        return rows
+            .map(row => ({
+                slug: String(row?.slug ?? ''),
+                name: String(row?.labels?.en ?? row?.carrier?.name ?? row?.slug ?? ''),
+                logoUrl: typeof row?.carrier?.logo === 'string' ? row.carrier.logo : undefined,
+            }))
+            .filter(row => row.slug);
+    }
+
     async searchCities(auth: BolesaRequestAuth, query: string): Promise<BolesaCityResult[]> {
         const data = await this.request<any>(auth, 'POST', '/geo/cities/search', { query });
         const rows = Array.isArray(data) ? data : (data?.cities ?? data?.items ?? []);
@@ -139,6 +154,7 @@ export class BolesaClient {
             number_of_pieces: input.numberOfPieces ?? 1,
             order_number: input.orderNumber,
             description: input.description,
+            allow_open: input.allowOpen === true,
             meta: input.meta,
             parcels: input.parcels,
             shipper: input.shipper,

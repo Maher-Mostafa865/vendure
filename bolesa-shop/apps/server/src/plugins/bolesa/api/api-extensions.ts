@@ -8,6 +8,9 @@ export const adminApiExtensions = gql`
         webhookApproved: Boolean!
         shipperAddress: JSON
         defaultServiceSlug: String
+        enabledServiceSlugs: [String!]!
+        allowOpen: Boolean!
+        autoCreateAwb: Boolean!
         shipmentCategory: String!
         creationMode: String!
         codEnabled: Boolean!
@@ -16,6 +19,12 @@ export const adminApiExtensions = gql`
         isActive: Boolean!
         lastVerifiedAt: DateTime
         labelNote: String!
+    }
+
+    type BolesaAccountService {
+        slug: String!
+        name: String!
+        logoUrl: String
     }
 
     type BolesaConnectionTestResult {
@@ -83,6 +92,9 @@ export const adminApiExtensions = gql`
         token: String
         shipperAddress: JSON
         defaultServiceSlug: String
+        enabledServiceSlugs: [String!]
+        allowOpen: Boolean
+        autoCreateAwb: Boolean
         shipmentCategory: String
         creationMode: String
         codEnabled: Boolean
@@ -93,6 +105,8 @@ export const adminApiExtensions = gql`
 
     extend type Query {
         bolesaConnection: BolesaConnection
+        """Services enabled on the Partner account. Prices here are not checkout prices."""
+        bolesaAccountServices: [BolesaAccountService!]!
         bolesaShipments(syncStatus: String, take: Int, skip: Int): BolesaShipmentList!
         bolesaShipment(fulfillmentId: ID!): BolesaShipment
         bolesaOpsHealth: BolesaOpsHealth!

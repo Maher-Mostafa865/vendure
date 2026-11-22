@@ -3,7 +3,8 @@ import { LanguageCode, Logger, ShippingCalculator } from '@vendure/core';
 import { BOLESA_SHIPPING_CALCULATOR_CODE, loggerCtx } from '../constants';
 import { BolesaApiError } from '../services/bolesa-client.service';
 import { BolesaConnectionService } from '../services/bolesa-connection.service';
-import { bindRateCache, BolesaRateService, resolveCarrierSlug } from '../services/bolesa-rate.service';
+import { bindRateCache, BolesaRateService } from '../services/bolesa-rate.service';
+import { merchantServiceSlugs } from '../util/merchant-services';
 import { PaymentPreference } from '../types';
 import { PricePresence } from '../util/shipping-diagnostics';
 
@@ -22,6 +23,7 @@ export interface ShippingCalculationLog {
         | 'currency_mismatch'
         | 'no_services'
         | 'slug_not_found'
+        | 'service_not_enabled'
         | 'missing_resolution_hash'
         | 'partner_http_error';
     /** Minor units when outcome is price. Null when the method is omitted. Never 0 for a Partner error. */
@@ -63,24 +65,32 @@ export const bolesaShippingCalculator = new ShippingCalculator({
         try {
             const conn = await connectionService.requireActive(ctx);
             const lookup = await rateService.lookupOptionsForOrder(ctx, order, preference);
-            const configuredSlug = args.carrierServiceSlug || 'auto';
-            const requestedSlug = resolveCarrierSlug(
-                (order as any).customFields?.bolesaServiceSlug,
-                configuredSlug,
-            );
+            const enabled = merchantServiceSlugs(conn.enabledServiceSlugs);
+            const offered = enabled.length
+                ? lookup.services.filter(service => enabled.includes(service.slug))
+                : lookup.services;
+            const customerSlug = String((order as any).customFields?.bolesaServiceSlug ?? '').trim();
+            const defaultSlug = String(conn.defaultServiceSlug ?? '').trim();
             const choices = rateService.quoteChoices(
-                lookup.services,
+                offered,
                 preference,
                 conn.markupPercent ?? 0,
                 conn.codFeeMode ?? 'absorb',
                 ctx.channel.defaultCurrencyCode,
             );
-            const chosen =
-                choices.find(choice => choice.slug === requestedSlug) ??
-                (requestedSlug !== configuredSlug
-                    ? choices.find(choice => choice.slug === configuredSlug)
-                    : undefined) ??
-                (configuredSlug === 'auto' || requestedSlug === 'auto' ? choices[0] : undefined);
+            const explicit = customerSlug && customerSlug !== 'auto' ? customerSlug : defaultSlug;
+            const chosen = explicit
+                ? choices.find(choice => choice.slug === explicit)
+                : choices[0];
+            const blockedReason = !chosen
+                ? explicit && enabled.length && !enabled.includes(explicit)
+                    ? 'service_not_enabled'
+                    : explicit
+                      ? 'slug_not_found'
+                      : offered.length
+                        ? 'missing_price'
+                        : 'no_services'
+                : undefined;
             const option = chosen
                 ? lookup.services.find(service => service.slug === chosen.slug)
                 : undefined;
@@ -96,11 +106,13 @@ export const bolesaShippingCalculator = new ShippingCalculator({
                     outcome: 'undefined',
                     reason: lookup.skipReason === 'missing_resolution_hash'
                         ? 'missing_resolution_hash'
-                        : !lookup.services.length
-                          ? 'no_services'
-                          : choices.length
-                            ? 'slug_not_found'
-                            : currencyBlockReason(lookup.services, ctx.channel.defaultCurrencyCode) ??
+                        : blockedReason === 'service_not_enabled' || blockedReason === 'slug_not_found'
+                          ? blockedReason
+                          : !offered.length
+                            ? lookup.services.length
+                              ? 'service_not_enabled'
+                              : 'no_services'
+                            : currencyBlockReason(offered, ctx.channel.defaultCurrencyCode) ??
                               'missing_price',
                     priceMinor: null,
                     quotePersisted: false,

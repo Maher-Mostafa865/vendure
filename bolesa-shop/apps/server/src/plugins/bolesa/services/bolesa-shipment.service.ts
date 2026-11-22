@@ -2,12 +2,14 @@ import { Inject, Injectable, OnModuleInit } from '@nestjs/common';
 import { HistoryEntryType, JobState } from '@vendure/common/lib/generated-types';
 import {
     ChannelService,
+    ConfigService,
     EventBus,
     Fulfillment,
     FulfillmentEvent,
     FulfillmentLine,
     HistoryService,
     ID,
+    isGraphQlErrorResult,
     JobQueue,
     JobQueueService,
     Logger,
@@ -15,6 +17,7 @@ import {
     OrderPlacedEvent,
     OrderService,
     OrderStateTransitionEvent,
+    PaymentMethodService,
     RequestContext,
     RequestContextService,
     TransactionalConnection,
@@ -25,6 +28,7 @@ import { In, LessThan } from 'typeorm';
 import {
     BOLESA_COD_HANDLER_CODE,
     BOLESA_FULFILLMENT_HANDLER_CODE,
+    BOLESA_SHIPPING_CALCULATOR_CODE,
     BOLESA_PLUGIN_OPTIONS,
     CANCEL_AWB_QUEUE,
     CREATE_AWB_QUEUE,
@@ -42,7 +46,9 @@ import {
 } from '../types';
 import { decideCreateAwbGate, isValidPersistedOrderId } from '../util/create-awb-gate';
 import { minorToMajor } from '../util/money';
+import { awbPaymentType, PaymentFact, shouldAutoFulfill } from '../util/payment-kind';
 import { buildAwbShipmentContent } from '../util/awb-content';
+import { merchantServiceSlugs, openShipmentImageError, resolveAwbServiceSlug } from '../util/merchant-services';
 import { partnerAddressLine } from '../util/partner-address-line';
 import {
     BolesaOpsSnapshot,
@@ -67,7 +73,7 @@ import {
 } from '../util/status-map';
 import { BolesaApiError, BolesaClient } from './bolesa-client.service';
 import { BolesaConnectionService } from './bolesa-connection.service';
-import { BolesaRateService, resolveCarrierSlug } from './bolesa-rate.service';
+import { BolesaRateService } from './bolesa-rate.service';
 
 @Injectable()
 export class BolesaShipmentService implements OnModuleInit {
@@ -83,7 +89,9 @@ export class BolesaShipmentService implements OnModuleInit {
         private connectionService: BolesaConnectionService,
         private rateService: BolesaRateService,
         private orderService: OrderService,
+        private paymentMethodService: PaymentMethodService,
         private historyService: HistoryService,
+        private configService: ConfigService,
         private requestContextService: RequestContextService,
         @Inject(BOLESA_PLUGIN_OPTIONS) private options: BolesaPluginOptions,
     ) {}
@@ -144,6 +152,9 @@ export class BolesaShipmentService implements OnModuleInit {
                     Logger.error(`onOrderCancelled: ${err?.message}`, loggerCtx),
                 );
             }
+            void this.maybeAutoFulfill(event).catch(err =>
+                Logger.error(`maybeAutoFulfill: ${err?.message}`, loggerCtx),
+            );
         });
     }
 
@@ -683,13 +694,21 @@ export class BolesaShipmentService implements OnModuleInit {
         const preference = ((order as any).customFields?.paymentPreference ?? 'prepaid') as PaymentPreference;
         const services = await this.rateService.getOptionsForOrder(ctx, order, preference);
         const conn = await this.connectionService.requireActive(ctx);
-        // Prefer shipping line metadata slug if present
-        const configuredSlug =
-            (order.shippingLines?.[0] as any)?.shippingMethod?.calculator?.args?.find(
-                (a: any) => a.name === 'carrierServiceSlug',
-            )?.value ?? conn.defaultServiceSlug ?? 'auto';
-        const metaSlug = resolveCarrierSlug((order as any).customFields?.bolesaServiceSlug, configuredSlug);
-        const option = this.rateService.pickOption(services, metaSlug);
+        const methodSlug = (order.shippingLines?.[0] as any)?.shippingMethod?.calculator?.args?.find(
+            (a: any) => a.name === 'carrierServiceSlug',
+        )?.value as string | undefined;
+        const chosen = resolveAwbServiceSlug({
+            customerSlug: (order as any).customFields?.bolesaServiceSlug,
+            defaultSlug: conn.defaultServiceSlug,
+            quoteSlug: methodSlug,
+            enabledSlugs: merchantServiceSlugs(conn.enabledServiceSlugs),
+        });
+        if ('error' in chosen) {
+            return;
+        }
+        const enabled = merchantServiceSlugs(conn.enabledServiceSlugs);
+        const offered = enabled.length ? services.filter(service => enabled.includes(service.slug)) : services;
+        const option = offered.find(service => service.slug === chosen.slug);
         if (!option) {
             return;
         }
@@ -1003,6 +1022,7 @@ export class BolesaShipmentService implements OnModuleInit {
             'lines',
             'lines.productVariant',
             'shippingLines',
+            'payments',
             'customer',
         ]);
         if (!order) {
@@ -1027,7 +1047,28 @@ export class BolesaShipmentService implements OnModuleInit {
             orderId: gate.orderId,
             attempt: gate.attempt,
         } as BolesaShipment;
-        const input = this.buildCreateInput(ctx, order, inputShipment, conn);
+        const built = this.buildCreateInput(
+            ctx,
+            order,
+            inputShipment,
+            conn,
+            awbPaymentType(await this.paymentFacts(ctx, order), (order as any).customFields?.paymentPreference),
+        );
+        if ('error' in built) {
+            await this.connection.withTransaction(ctx, async txCtx => {
+                const shipment = await this.lockShipmentForFulfillment(txCtx, fulfillmentId);
+                if (!shipment) {
+                    return;
+                }
+                shipment.syncStatus = 'failed';
+                shipment.lastError = built.error;
+                shipment.lastErrorAt = new Date();
+                await this.connection.getRepository(txCtx, BolesaShipment).save(shipment);
+                await this.patchFulfillment(txCtx, fulfillmentId, { bolesaSyncStatus: 'failed' });
+            });
+            return { ok: false };
+        }
+        const input = built.input;
 
         try {
             const result = await this.client.createAwb(auth, input, gate.idempotencyKey);
@@ -1672,8 +1713,9 @@ export class BolesaShipmentService implements OnModuleInit {
         order: Order,
         shipment: BolesaShipment,
         conn: Awaited<ReturnType<BolesaConnectionService['requireActive']>>,
-    ): BolesaCreateAwbInput {
-        const preference = ((order as any).customFields?.paymentPreference ?? 'prepaid') as PaymentPreference;
+        paymentType: 'cc' | 'cod',
+    ): { input: BolesaCreateAwbInput } | { error: string } {
+        const preference = paymentType;
         let quote: PersistedBolesaQuote | null = null;
         try {
             const raw = (order as any).customFields?.bolesaQuote;
@@ -1681,8 +1723,20 @@ export class BolesaShipmentService implements OnModuleInit {
         } catch {
             quote = null;
         }
-        const serviceSlug =
-            quote?.serviceSlug ?? conn.defaultServiceSlug ?? 'default';
+        const chosen = resolveAwbServiceSlug({
+            customerSlug: (order as any).customFields?.bolesaServiceSlug,
+            quoteSlug: quote?.serviceSlug,
+            defaultSlug: conn.defaultServiceSlug,
+            enabledSlugs: merchantServiceSlugs(conn.enabledServiceSlugs),
+        });
+        if ('error' in chosen) {
+            return chosen;
+        }
+        const serviceSlug = chosen.slug;
+        const imageError = openShipmentImageError(conn.allowOpen === true, serviceSlug);
+        if (imageError) {
+            return { error: imageError };
+        }
         const shipper = conn.shipperAddress ?? {};
         const consigneeHash = (order.shippingAddress as any)?.customFields?.bolesaCityHash;
         const content = buildAwbShipmentContent(
@@ -1731,6 +1785,7 @@ export class BolesaShipmentService implements OnModuleInit {
                     : undefined,
             },
             description: content.description,
+            allowOpen: conn.allowOpen === true,
             meta: {
                 vendure_shipment_key: shipment.shipmentKey,
                 vendure_order_code: order.code,
@@ -1739,10 +1794,115 @@ export class BolesaShipmentService implements OnModuleInit {
             parcels: content.parcels,
         };
         if (preference === 'cod') {
-            // Full amount customer owes including shipping (Vendure minor → EGP major)
-            input.codAmount = minorToMajor(order.totalWithTax);
+            // Full amount the customer owes, including shipping. Options preview uses goods only.
+            input.codAmount = minorToMajor(order.totalWithTax, this.moneyPrecision());
         }
-        return input;
+        return { input };
+    }
+
+    /**
+     * Automatic mode creates the Vendure fulfillment after the order is allowed to ship.
+     * Prepaid waits for PaymentSettled. COD (bolesa-cod stays Authorized until delivery)
+     * starts at PaymentAuthorized. Partner HTTP stays on the fulfillment outbox, after commit.
+     */
+    private async maybeAutoFulfill(event: OrderStateTransitionEvent): Promise<void> {
+        if (event.toState !== 'PaymentAuthorized' && event.toState !== 'PaymentSettled') {
+            return;
+        }
+        const conn = await this.connectionService.getForChannel(event.ctx);
+        if (!conn?.isActive || conn.autoCreateAwb !== true) {
+            return;
+        }
+        const order = await this.orderService.findOne(event.ctx, event.order.id, [
+            'lines',
+            'payments',
+            'shippingLines',
+            'shippingLines.shippingMethod',
+            'fulfillments',
+        ]);
+        if (!order || order.state === 'Cancelled' || !order.lines?.length) {
+            return;
+        }
+        const method = order.shippingLines?.[0]?.shippingMethod as
+            | { calculator?: { code?: string }; fulfillmentHandlerCode?: string }
+            | undefined;
+        const isBolesa =
+            method?.calculator?.code === BOLESA_SHIPPING_CALCULATOR_CODE ||
+            method?.fulfillmentHandlerCode === BOLESA_FULFILLMENT_HANDLER_CODE;
+        if (!isBolesa) {
+            return;
+        }
+        const hasBolesaFulfillment = (order.fulfillments ?? []).some(
+            fulfillment =>
+                (fulfillment as any).handlerCode === BOLESA_FULFILLMENT_HANDLER_CODE ||
+                fulfillment.method === 'Bolesa',
+        );
+        const ready = shouldAutoFulfill({
+            toState: event.toState,
+            payments: await this.paymentFacts(event.ctx, order),
+            hasBolesaFulfillment,
+        });
+        if (!ready) {
+            return;
+        }
+        const chosen = resolveAwbServiceSlug({
+            customerSlug: (order as any).customFields?.bolesaServiceSlug,
+            defaultSlug: conn.defaultServiceSlug,
+            enabledSlugs: merchantServiceSlugs(conn.enabledServiceSlugs),
+        });
+        if ('error' in chosen) {
+            await this.note(event.ctx, order.id, chosen.error);
+            return;
+        }
+        if ((order as any).customFields?.bolesaServiceSlug !== chosen.slug) {
+            await this.orderService.updateCustomFields(event.ctx, order.id, {
+                bolesaServiceSlug: chosen.slug,
+            });
+        }
+        const result = await this.orderService.createFulfillment(event.ctx, {
+            lines: order.lines.map(line => ({ orderLineId: line.id, quantity: line.quantity })),
+            handler: { code: BOLESA_FULFILLMENT_HANDLER_CODE, arguments: [] },
+        });
+        if (isGraphQlErrorResult(result)) {
+            const detail =
+                (result as { fulfillmentHandlerError?: string; message?: string }).fulfillmentHandlerError ||
+                result.message;
+            await this.note(event.ctx, order.id, `Automatic Bolesa fulfillment was not created: ${detail}`);
+        }
+    }
+
+    /** Handler code from the channel's PaymentMethod. Client metadata is ignored. */
+    private async paymentFacts(ctx: RequestContext, order: Order): Promise<PaymentFact[]> {
+        const facts: PaymentFact[] = [];
+        for (const payment of order.payments ?? []) {
+            let handlerCode: string | null = null;
+            try {
+                const found = await this.paymentMethodService.getMethodAndOperations(ctx, payment.method);
+                handlerCode = found.paymentMethod.handler?.code ?? null;
+            } catch {
+                handlerCode = null;
+            }
+            facts.push({ state: payment.state, methodCode: payment.method, handlerCode });
+        }
+        return facts;
+    }
+
+    private moneyPrecision(): number {
+        const precision = this.configService.entityOptions?.moneyStrategy?.precision;
+        return typeof precision === 'number' ? precision : 2;
+    }
+
+    private async note(ctx: RequestContext, orderId: ID, note: string): Promise<void> {
+        try {
+            await this.historyService.createHistoryEntryForOrder({
+                ctx,
+                orderId,
+                type: HistoryEntryType.ORDER_NOTE,
+                data: { note },
+            });
+        } catch (err: any) {
+            Logger.warn(`Bolesa note skipped for order ${orderId}: ${err?.message}`, loggerCtx);
+        }
     }
 
     private async patchFulfillment(

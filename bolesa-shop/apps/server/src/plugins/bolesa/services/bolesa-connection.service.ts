@@ -11,6 +11,7 @@ import {
 import { BOLESA_PLUGIN_OPTIONS, loggerCtx } from '../constants';
 import { BolesaConnection } from '../entities/bolesa-connection.entity';
 import { BolesaPluginOptions } from '../types';
+import { merchantServiceSlugs } from '../util/merchant-services';
 import { BolesaApiError, BolesaClient } from './bolesa-client.service';
 
 export interface UpdateBolesaConnectionInput {
@@ -18,6 +19,9 @@ export interface UpdateBolesaConnectionInput {
     token?: string;
     shipperAddress?: Record<string, unknown> | null;
     defaultServiceSlug?: string | null;
+    enabledServiceSlugs?: string[] | null;
+    allowOpen?: boolean;
+    autoCreateAwb?: boolean;
     shipmentCategory?: 'dry' | 'heavy' | 'cold';
     creationMode?: 'manual' | 'onPaymentSettled' | 'onPlaced';
     codEnabled?: boolean;
@@ -88,9 +92,23 @@ export class BolesaConnectionService {
         if (input.shipperAddress !== undefined) {
             entity.shipperAddress = input.shipperAddress;
         }
-        if (input.defaultServiceSlug !== undefined) {
-            entity.defaultServiceSlug = input.defaultServiceSlug;
+        if (input.enabledServiceSlugs !== undefined) {
+            entity.enabledServiceSlugs = merchantServiceSlugs(input.enabledServiceSlugs);
         }
+        if (input.allowOpen !== undefined) {
+            entity.allowOpen = input.allowOpen;
+        }
+        if (input.autoCreateAwb !== undefined) {
+            entity.autoCreateAwb = input.autoCreateAwb;
+        }
+        if (input.defaultServiceSlug !== undefined) {
+            entity.defaultServiceSlug = input.defaultServiceSlug?.trim() || null;
+        }
+        const checkCatalog =
+            input.enabledServiceSlugs !== undefined ||
+            input.defaultServiceSlug !== undefined ||
+            input.autoCreateAwb === true;
+        await this.assertMerchantServices(entity, checkCatalog);
         if (input.shipmentCategory !== undefined) {
             entity.shipmentCategory = input.shipmentCategory;
         }
@@ -111,6 +129,17 @@ export class BolesaConnectionService {
         }
 
         return this.connection.getRepository(ctx, BolesaConnection).save(entity);
+    }
+
+    /** Partner catalogue for the settings page. Not used as checkout prices. */
+    async listAccountServices(
+        ctx: RequestContext,
+    ): Promise<Array<{ slug: string; name: string; logoUrl?: string }>> {
+        const conn = await this.getForChannel(ctx);
+        if (!conn?.tokenEncrypted) {
+            return [];
+        }
+        return this.client.listAccountServices(this.authFor(conn));
     }
 
     async testConnection(ctx: RequestContext): Promise<{ ok: boolean; message: string }> {
@@ -139,6 +168,9 @@ export class BolesaConnectionService {
             webhookApproved: conn.webhookApproved,
             shipperAddress: conn.shipperAddress,
             defaultServiceSlug: conn.defaultServiceSlug,
+            enabledServiceSlugs: merchantServiceSlugs(conn.enabledServiceSlugs),
+            allowOpen: conn.allowOpen === true,
+            autoCreateAwb: conn.autoCreateAwb === true,
             shipmentCategory: conn.shipmentCategory,
             creationMode: conn.creationMode,
             codEnabled: conn.codEnabled,
@@ -149,6 +181,43 @@ export class BolesaConnectionService {
             labelNote:
                 'Labels from Partner API label_url may be private (Phase 0: S3 403). Download requires a future Bolesa label endpoint.',
         };
+    }
+
+    /**
+     * Automatic creation needs a default service. A default must be one of the
+     * services the merchant enabled. Slugs are checked against GET /services when a token exists.
+     */
+    private async assertMerchantServices(entity: BolesaConnection, checkCatalog: boolean): Promise<void> {
+        const enabled = merchantServiceSlugs(entity.enabledServiceSlugs);
+        const fallback = entity.defaultServiceSlug?.trim() || '';
+        if (entity.autoCreateAwb && !fallback) {
+            throw new UserInputError(
+                'Automatic AWB creation needs a default Bolesa service. Choose one from the enabled services.',
+            );
+        }
+        if (fallback && enabled.length && !enabled.includes(fallback)) {
+            throw new UserInputError(
+                `Default service ${fallback} is not in the services enabled for this channel.`,
+            );
+        }
+        if (!checkCatalog || !entity.tokenEncrypted || (!enabled.length && !fallback)) {
+            return;
+        }
+        let catalog: string[] = [];
+        try {
+            catalog = (await this.client.listAccountServices(this.authFor(entity))).map(row => row.slug);
+        } catch (e: any) {
+            const message = e instanceof BolesaApiError ? `${e.code}: ${e.message}` : e?.message;
+            throw new UserInputError(
+                `Could not verify Bolesa services: ${message}. The service list was not saved.`,
+            );
+        }
+        const unknown = [...enabled, fallback].filter(slug => slug && !catalog.includes(slug));
+        if (unknown.length) {
+            throw new UserInputError(
+                `Unknown Bolesa service: ${[...new Set(unknown)].join(', ')}. Refresh the account service list.`,
+            );
+        }
     }
 
     private encrypt(plaintext: string): string {

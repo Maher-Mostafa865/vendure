@@ -2,6 +2,7 @@ import { Inject, Injectable, Optional } from '@nestjs/common';
 import { JsonCompatible } from '@vendure/common/lib/shared-types';
 import {
     CacheService,
+    ConfigService,
     Injector,
     Logger,
     Order,
@@ -38,13 +39,19 @@ export class BolesaRateService {
         private client: BolesaClient,
         @Inject(BOLESA_PLUGIN_OPTIONS) private options: BolesaPluginOptions,
         @Optional() private cache?: CacheService,
+        @Optional() private configService?: ConfigService,
     ) {}
 
     setCache(cache: CacheService) {
         this.cache = cache;
     }
 
-    static orderFingerprint(order: Order, preference: PaymentPreference, channelCurrency = ''): string {
+    static orderFingerprint(
+        order: Order,
+        preference: PaymentPreference,
+        channelCurrency = '',
+        allowOpen = false,
+    ): string {
         const addr = order.shippingAddress ?? {};
         const hash = (addr as any).customFields?.bolesaCityHash ?? '';
         const weight = order.lines.reduce((sum, l) => {
@@ -59,6 +66,7 @@ export class BolesaRateService {
             order.subTotalWithTax,
             order.totalQuantity,
             channelCurrency.trim().toUpperCase(),
+            allowOpen ? 'open' : 'closed',
         ].join('|');
     }
 
@@ -93,6 +101,7 @@ export class BolesaRateService {
             order,
             preference,
             ctx.channel.defaultCurrencyCode,
+            conn.allowOpen === true,
         );
         const cacheKey = `bolesa:rates:${ctx.channelId}:${fingerprint}`;
         if (this.cache) {
@@ -121,6 +130,7 @@ export class BolesaRateService {
             shipment_category: conn.shipmentCategory ?? 'dry',
             payment_type: preference === 'cod' ? 'cod' : 'cc',
             weight: weightKg,
+            allow_open: conn.allowOpen === true,
             shipper: {
                 name: shipper.name,
                 phone: shipper.phone,
@@ -145,7 +155,7 @@ export class BolesaRateService {
         };
         if (preference === 'cod') {
             // Goods + shipping estimated later; for options preview use goods total.
-            body.cod_amount = minorToMajor(order.subTotalWithTax);
+            body.cod_amount = minorToMajor(order.subTotalWithTax, this.moneyPrecision());
         }
 
         const auth = this.connectionService.authFor(conn);
@@ -236,13 +246,16 @@ export class BolesaRateService {
         if (markupPercent) {
             major = major * (1 + markupPercent / 100);
         }
-        const priceMinor = majorToMinor(major);
+        const priceMinor = majorToMinor(major, this.moneyPrecision());
         const quote: PersistedBolesaQuote = {
             serviceSlug: option.slug,
             carrierName: option.carrierName,
             priceMinor,
             currencyCode: partnerCurrency,
-            codFeeMinor: option.codCollectionFee != null ? majorToMinor(option.codCollectionFee) : undefined,
+            codFeeMinor:
+                option.codCollectionFee != null
+                    ? majorToMinor(option.codCollectionFee, this.moneyPrecision())
+                    : undefined,
             paymentPreference: preference,
             capturedAt: new Date().toISOString(),
         };
@@ -264,6 +277,11 @@ export class BolesaRateService {
             ccPrice: mappedPricePresence(option.ccPrice),
             codPrice: mappedPricePresence(option.codPrice),
         };
+    }
+
+    private moneyPrecision(): number {
+        const precision = this.configService?.entityOptions?.moneyStrategy?.precision;
+        return typeof precision === 'number' ? precision : 2;
     }
 
     /** Whitelist for Shop API ShippingMethodQuote.metadata — never include contracts/fees breakdown. */

@@ -30,7 +30,7 @@ function order(countryCode = 'EG', hash = 'city-hash') {
     } as any;
 }
 
-function connection(active = true) {
+function connection(active = true, extra: Record<string, unknown> = {}) {
     return {
         requireActive: async () => {
             if (!active) {
@@ -47,6 +47,9 @@ function connection(active = true) {
                 shipmentCategory: 'dry',
                 markupPercent: 0,
                 codFeeMode: 'absorb',
+                allowOpen: false,
+                enabledServiceSlugs: [],
+                ...extra,
             };
         },
         authFor: () => ({ apiBaseUrl: rateOptions.apiBaseUrl, token: 'do-not-log' }),
@@ -95,9 +98,13 @@ describe('BolesaRateService.buildQuote', () => {
 });
 
 describe('eligible shipping calculation', () => {
-    async function wire(observe: () => Promise<any> | any, cache?: { get: any; set: any }) {
+    async function wire(
+        observe: (auth?: unknown, body?: any) => Promise<any> | any,
+        cache?: { get: any; set: any },
+        extra: Record<string, unknown> = {},
+    ) {
         const client = { observeServiceOptions: observe };
-        const conn = connection(true);
+        const conn = connection(true, extra);
         const rate = new BolesaRateService(conn as any, client as any, rateOptions);
         const boundCache = cache ?? {
             get: async () => undefined,
@@ -232,6 +239,49 @@ describe('eligible shipping calculation', () => {
         assert.equal((result.metadata as any).options[0].priceMinor, 1140);
     });
 
+    it('sends the merchant allow-open policy and offers only enabled services', async () => {
+        let body: any;
+        await wire(
+            async (_auth, sent) => {
+                body = sent;
+                return {
+                    httpStatus: 200,
+                    services: [
+                        { slug: 'bosta', ccPrice: 11.4, codPrice: 11.4, currencyCode: 'EGP' },
+                        { slug: 'aramex', ccPrice: 80, codPrice: 80, currencyCode: 'EGP' },
+                    ],
+                    rawPrices: [],
+                };
+            },
+            undefined,
+            { allowOpen: true, enabledServiceSlugs: ['aramex'], defaultServiceSlug: 'aramex' },
+        );
+        const result = await bolesaShippingCalculator.calculate(ctx, order(), args, {} as any);
+        assert.equal(body.allow_open, true);
+        assert.ok(result);
+        assert.equal(result.price, 8000);
+        assert.deepEqual((result.metadata as any).options.map((choice: { slug: string }) => choice.slug), ['aramex']);
+    });
+
+    it('does not switch to another carrier when the selected service is disabled', async () => {
+        await wire(
+            async () => ({
+                httpStatus: 200,
+                services: [
+                    { slug: 'bosta', ccPrice: 11.4, codPrice: 11.4, currencyCode: 'EGP' },
+                    { slug: 'aramex', ccPrice: 80, codPrice: 80, currencyCode: 'EGP' },
+                ],
+                rawPrices: [],
+            }),
+            undefined,
+            { enabledServiceSlugs: ['aramex'], defaultServiceSlug: 'aramex' },
+        );
+        const selected = order();
+        selected.customFields.bolesaServiceSlug = 'bosta';
+        const result = await bolesaShippingCalculator.calculate(ctx, selected, args, {} as any);
+        assert.equal(result, undefined);
+    });
+
     it('does not turn a Partner HTTP error into a zero shipping price', async () => {
         await wire(async () => {
             throw new BolesaApiError('http_500', 'Bolesa API error 500', 500);
@@ -247,6 +297,8 @@ describe('rate cache fingerprint', () => {
         const egp = BolesaRateService.orderFingerprint(sample, 'prepaid', 'EGP');
         const sar = BolesaRateService.orderFingerprint(sample, 'prepaid', 'SAR');
         assert.notEqual(egp, sar);
+        const open = BolesaRateService.orderFingerprint(sample, 'prepaid', 'EGP', true);
+        assert.notEqual(egp, open);
     });
 });
 
