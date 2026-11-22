@@ -421,9 +421,22 @@ export class IndexerController {
             ctx.setChannel(originalChannel);
             let product = productMap.get(variant.productId);
             if (!product) {
-                product = await this.getProductInChannelQueryBuilder(ctx, variant.productId, ctx.channel);
+                // The batch can include variants from other channels. Look the product up on the
+                // variant's own channels, and skip it when it is not assigned to any of them.
+                // Throwing here used to abort the whole job, so variants that do belong to the
+                // active channel never had their collection membership written to the index.
+                const lookupChannels = variant.channels?.length ? variant.channels : [ctx.channel];
+                product = await this.getProductInChannelQueryBuilder(
+                    ctx,
+                    variant.productId,
+                    ...lookupChannels,
+                );
                 if (!product) {
-                    throw new Error('Product not found for variant!');
+                    Logger.warn(
+                        `Skipping search index update for variant ${variant.id}: product ${variant.productId} is not assigned to its channels`,
+                        workerLoggerCtx,
+                    );
+                    continue;
                 }
                 productMap.set(variant.productId, product);
             }

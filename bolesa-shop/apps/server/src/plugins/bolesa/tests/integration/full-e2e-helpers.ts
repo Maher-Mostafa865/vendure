@@ -435,48 +435,111 @@ export async function seedFullE2eCatalog(
     };
 }
 
-/** Update local Partner AWB status_code (bolesa_eg only) for reconcile DELIVERED tests. */
+const FORBIDDEN_PARTNER_DATABASES = new Set([
+    'vendure-dev',
+    'vendure-bolesa-test',
+    'postgres',
+    'template0',
+    'template1',
+]);
+
+/**
+ * Local Partner app env used only to mark an AWB this harness created.
+ * `BOLESA_LOCAL_PARTNER_ENV` wins. Otherwise the sibling checkout `bolesa-egy/.env`.
+ */
+export function localPartnerEnvPath(): string {
+    const configured = process.env.BOLESA_LOCAL_PARTNER_ENV?.trim();
+    const candidates = [
+        configured,
+        path.resolve(__dirname, '../../../../../../../../../bolesa-egy/.env'),
+    ].filter((value): value is string => Boolean(value));
+    const found = candidates.find(candidate => fs.existsSync(candidate));
+    if (!found) {
+        throw new Error(
+            `SAFETY ABORT: local Partner env file not found. Set BOLESA_LOCAL_PARTNER_ENV. Tried: ${candidates.join(', ')}`,
+        );
+    }
+    return found;
+}
+
+function loadLocalPartnerDb(): {
+    host: string;
+    port: number;
+    database: string;
+    user: string;
+    password: string;
+} {
+    const lines = fs.readFileSync(localPartnerEnvPath(), 'utf8').split('\n');
+    const env: Record<string, string> = {};
+    for (const line of lines) {
+        if (!line || line.startsWith('#') || !line.includes('=')) continue;
+        const eq = line.indexOf('=');
+        const key = line.slice(0, eq).trim();
+        let value = line.slice(eq + 1).trim();
+        if (
+            (value.startsWith('"') && value.endsWith('"')) ||
+            (value.startsWith("'") && value.endsWith("'"))
+        ) {
+            value = value.slice(1, -1);
+        }
+        // First wins for duplicated keys.
+        if (!(key in env)) {
+            env[key] = value;
+        }
+    }
+    const host = env.DB_HOST || '127.0.0.1';
+    const port = Number(env.DB_PORT || 5432);
+    const database = env.DB_DATABASE;
+    const user = env.DB_USERNAME;
+    const password = env.DB_PASSWORD;
+    if (!database || !user || !password || !Number.isFinite(port)) {
+        throw new Error('SAFETY ABORT: local Partner env is missing database connection settings');
+    }
+    if (host !== '127.0.0.1' && host !== 'localhost') {
+        throw new Error('SAFETY ABORT: local Partner database host is not local');
+    }
+    if (FORBIDDEN_PARTNER_DATABASES.has(database)) {
+        throw new Error(`SAFETY ABORT: refusing to update AWB status in database ${database}`);
+    }
+    return { host, port, database, user, password };
+}
+
+/** Update one local Partner AWB status_code so reconcile can observe DELIVERED. */
 export async function setLocalPartnerAwbStatus(
     trackingNumber: string,
     statusCode: string,
 ): Promise<void> {
-    const envPath = '/home/maher/projects/0-Project-Storage-Station/bolesa-egy/.env';
-    const lines = fs.readFileSync(envPath, 'utf8').split('\n');
-    const env: Record<string, string> = {};
-    for (const line of lines) {
-        if (!line || line.startsWith('#') || !line.includes('=')) continue;
-        const [k, ...rest] = line.split('=');
-        let v = rest.join('=').trim();
-        if (
-            (v.startsWith('"') && v.endsWith('"')) ||
-            (v.startsWith("'") && v.endsWith("'"))
-        ) {
-            v = v.slice(1, -1);
-        }
-        // First wins for duplicated keys (DB_PORT=5432 before polluted overrides in file)
-        if (!(k.trim() in env)) {
-            env[k.trim()] = v;
-        }
-    }
-    // Prefer explicit local bolesa ports from file order — re-read carefully
-    const host = '127.0.0.1';
-    const port = '5432';
-    const database = 'bolesa_eg';
-    const user = env.DB_USERNAME;
-    const password = env.DB_PASSWORD;
-    const client = new pg.Client({ host, port: +port, user, password, database });
+    const db = loadLocalPartnerDb();
+    const client = new pg.Client({
+        host: db.host,
+        port: db.port,
+        user: db.user,
+        password: db.password,
+        database: db.database,
+    });
     await client.connect();
     try {
-        const r = await client.query(
+        const current = String(
+            (await client.query<{ current_database: string }>('SELECT current_database()')).rows[0]
+                .current_database,
+        );
+        if (current !== db.database || FORBIDDEN_PARTNER_DATABASES.has(current)) {
+            throw new Error(`SAFETY ABORT: connected to ${current}`);
+        }
+        const updated = await client.query(
             `UPDATE shipping_awbs
              SET status_code = $1,
                  is_delivered = $2,
                  updated_at = NOW()
-             WHERE tracking_number = $3 AND account_id = 5
-             RETURNING id, tracking_number, status_code`,
+             WHERE tracking_number = $3
+             RETURNING id`,
             [statusCode, statusCode.toUpperCase() === 'DELIVERED', trackingNumber],
         );
-        assert.ok(r.rows.length === 1, `expected 1 local AWB update for ${trackingNumber}`);
+        assert.equal(
+            updated.rows.length,
+            1,
+            `expected 1 local AWB update for ${trackingNumber} in ${current}`,
+        );
     } finally {
         await client.end();
     }

@@ -134,6 +134,6 @@ Creating an AWB at order placement was rejected: the customer can abandon paymen
 
 ## Tests
 
-Unit coverage includes the handler-based COD decision (`payment-kind.spec.ts`, using `bolesaCodPaymentHandler` and `dummyPaymentHandler`), precision 0/2/3 (`money.spec.ts`), currency match, and the rule that a stored auto quote does not replace the default service. A Partner HTTP error still returns `undefined` for this method only.
+Unit coverage includes the handler-based COD decision (`payment-kind.spec.ts`, using `bolesaCodPaymentHandler` and `dummyPaymentHandler`), precision 0/2/3 (`money.spec.ts`), currency match, and the rule that a stored auto quote does not replace the default service. A Partner HTTP error still returns `undefined` for this method only, so Standard and Express stay available.
 
-Remote sandbox was not run. See `SANDBOX_E2E_EXECUTION_REPORT.md`.
+On 2026-11-22 the isolated database `vendure-bolesa-test` was created on PostgreSQL `127.0.0.1:5432` and migrated with `synchronize` off. Integration tests passed there with Partner HTTP banned. The local Partner E2E passed against `127.0.0.1:8000` (`test_mode=false`, so this is not official Sandbox): one prepaid Worker AWB cancelled, one COD payment left `Authorized` until reconcile saw `DELIVERED` and settled it once. `autoCreateAwb` stayed false and fulfillment was created manually. Official remote Sandbox is still blocked: `.env.remote-sandbox` does not exist. Production is not approved. Evidence is in `SANDBOX_E2E_EXECUTION_REPORT.md`.

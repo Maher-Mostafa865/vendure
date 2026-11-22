@@ -160,9 +160,14 @@ export class BolesaClient {
             shipper: input.shipper,
             consignees: [input.consignee],
         };
-        const raw = await this.requestRaw(auth, 'POST', '/awbs', body, {
-            'Idempotency-Key': idempotencyKey,
-        });
+        const raw = await this.requestRaw(
+            auth,
+            'POST',
+            '/awbs',
+            body,
+            { 'Idempotency-Key': idempotencyKey },
+            60_000,
+        );
         if (raw.status === 202) {
             return {
                 status: 'queued',
@@ -215,6 +220,7 @@ export class BolesaClient {
             `/awbs/${encodeURIComponent(trackingNumber)}/cancel`,
             {},
             { 'Idempotency-Key': idempotencyKey },
+            60_000,
         );
         return {
             status: data?.status ?? 'canceled',
@@ -233,8 +239,9 @@ export class BolesaClient {
         path: string,
         body?: unknown,
         extraHeaders?: Record<string, string>,
+        timeoutMs = 15_000,
     ): Promise<T> {
-        const raw = await this.requestRaw(auth, method, path, body, extraHeaders);
+        const raw = await this.requestRaw(auth, method, path, body, extraHeaders, timeoutMs);
         return (raw.data?.data ?? raw.data) as T;
     }
 
@@ -244,6 +251,7 @@ export class BolesaClient {
         path: string,
         body?: unknown,
         extraHeaders?: Record<string, string>,
+        timeoutMs = 15_000,
     ): Promise<{ status: number; data: any; headers: Headers }> {
         const base = (auth.apiBaseUrl || this.options.apiBaseUrl).replace(/\/$/, '');
         const url = `${base}${path.startsWith('/') ? path : `/${path}`}`;
@@ -257,7 +265,7 @@ export class BolesaClient {
         }
 
         const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 15_000);
+        const timeout = setTimeout(() => controller.abort(), timeoutMs);
         let response: Response;
         try {
             response = await fetch(url, {

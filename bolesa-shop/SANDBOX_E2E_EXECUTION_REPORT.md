@@ -1,10 +1,10 @@
 # Sandbox E2E Execution Report
 
 **Official remote status: OFFICIAL REMOTE SANDBOX E2E BLOCKED**  
-**Local Full E2E:** **PASS** (unchanged)  
+**Local Full E2E:** **PASS** (re-run 2026-11-22 on `vendure-bolesa-test`, Partner `127.0.0.1:8000`)  
 **Production readiness:** **NOT APPROVED**
 
-**Date:** 2026-11-20
+**Date:** 2026-11-22 (local re-run). The 2026-11-20 baseline remains in section A.
 
 Bolesa Laravel project path used: `/home/maher/projects/0-Project-Storage-Station/bolesa-egy`  
 (note: `…/vendure/bolesa-eg` does not exist on disk)
@@ -119,10 +119,53 @@ COD for automatic fulfillment and for the AWB is the channel PaymentMethod handl
 
 Money conversion uses `moneyStrategy.precision` (default 2). Unit tests cover precision 0, 2, and 3.
 
-Integration and local sandbox E2E were not executed. Missing together:
+At the time of this section, integration and local sandbox E2E had not been executed. Section I is the later re-run. The prerequisites listed here were recovered after this note:
 
 - `bolesa-shop/apps/server/.env.test`
-- PostgreSQL database `vendure-bolesa-test` (only `vendure-dev` exists on `localhost:5432`; port `6543` from the 2026-11-20 run is not the current server)
+- PostgreSQL database `vendure-bolesa-test` (only `vendure-dev` existed on `localhost:5432`; port `6543` from the 2026-11-20 run is not the current server)
 - `bolesa-shop/.env.sandbox`
 
-Those files were not invented, and `vendure-dev` was not copied or migrated.
+Those files were not invented at the time of this section, and `vendure-dev` was not copied or migrated.
+
+## I. 2026-11-22 isolated environment recovery and re-run
+
+PostgreSQL is only on `127.0.0.1:5432` (PostgreSQL 19). Port `6543` is closed. Role `vendure` has `CREATEDB`. Database `vendure-bolesa-test` did not exist and was created with `OWNER vendure`. `vendure-dev` was not migrated, reset, or written by the harness. The full-flow assertion recorded `vendure-dev` at 2 channels and 3 orders.
+
+| File | Result |
+| --- | --- |
+| `apps/server/.env.test` | Created, gitignored. `DB_NAME=vendure-bolesa-test`, port `5432`. Partner URL in this file is the unroutable `http://127.0.0.1:9/forbidden-partner-api`. |
+| `bolesa-shop/.env.sandbox` | Created, gitignored. Host `127.0.0.1:8000` only. Token reused from the existing local connection (last4 `mqQ6`), not printed. |
+| `.env.remote-sandbox` | Still absent. Not invented. |
+
+`synchronize` stayed false. Migrations applied to `vendure-bolesa-test` only: BolesaPhase1, Init, BolesaPhase1EnsureAfterInit, BolesaServiceSlug, BolesaVariantWeight, BolesaMerchantSettings.
+
+Local Partner identity is not official Sandbox. `GET /me` on `127.0.0.1:8000` returned HTTP 200 and `test_mode=false`. The local database named by `bolesa-egy/.env` is `bs_egypt`. AWBs created by this run are on account `6`.
+
+### Results
+
+| Suite | Result | Command | Database / endpoint | Counts |
+| --- | --- | --- | --- | --- |
+| Unit | **PASS** | `npm run test:bolesa` | no database | 122 pass, 0 fail |
+| Typecheck | **PASS** | `npm run typecheck` | none | exit 0 |
+| Build | **PASS** | `npm run build` | none | dashboard 28.2s, server/worker 3.2s, exit 0 |
+| Integration | **PASS** | `npm run test:bolesa:integration` | `vendure-bolesa-test` @ `127.0.0.1:5432`. Partner fetch banned. | 29 pass, 0 fail. Full-flow and local plugin E2E skipped because `BOLESA_SANDBOX_E2E` was unset. Remote suite recorded the missing `.env.remote-sandbox` blocker. |
+| Local Partner E2E | **PASS** | `npm run test:bolesa:sandbox-e2e`, then the full-flow file again after the harness fix | `vendure-bolesa-test`. Partner `http://127.0.0.1:8000/api/pcl/v1` | Plugin file 5 pass (connection, cities, 5 priced services, create/idempotent replay/cancel, channel leak 0). Full flow 3 pass. |
+| Official remote Sandbox | **BLOCKED** | not run | `.env.remote-sandbox` missing | No remote AWB create or cancel. |
+| Production | **NOT APPROVED** | — | — | Local pass does not approve production. |
+
+### COD evidence from the full-flow Payment rows
+
+- Prepaid method `dummy-prepaid-e2e` (dummy handler, automatic settle) produced one Worker AWB and one cancel. Tracking `292284550` ended `CANCELED`. One shipment row for that fulfillment.
+- COD method `bolesa-cod-e2e` (handler `bolesa-cod`) was `Authorized` for the order total (`11140`) before fulfillment. The AWB `cod_amount` was `111.4`. The payment was not settled by authorization.
+- After the local AWB was marked `DELIVERED` and `bolesa-reconcile-shipments` ran, that payment became `Settled` once and `codCollectionStatus` became `collected`. A second reconcile left the settled count at 1.
+- Fulfillment in this harness is manual `OrderService.createFulfillment`. The connection leaves `autoCreateAwb` at its default `false`. `maybeAutoFulfill` returns unless that flag is true. Forged client metadata is rejected by `payment-kind.spec.ts`, not by this database flow.
+- Channel isolation: leaked shipment rows `0`.
+
+### Defects fixed in this run
+
+- `setLocalPartnerAwbStatus` no longer reads the missing `0-Project-Storage-Station` path, database `bolesa_eg`, or account `5`. It uses `BOLESA_LOCAL_PARTNER_ENV` or the sibling `bolesa-egy/.env`, and updates the single row for that tracking number. It refuses `vendure-dev` and `vendure-bolesa-test`.
+- `POST /awbs` and cancel wait 60 seconds. Other Partner calls stay at 15 seconds. A 15-second abort had returned while the local Partner had already created the AWB.
+
+### Cleanup outside the harness
+
+While clearing local AWBs left `READY FOR SHIPMENT` by the first failed run, cancel was also sent for tracking `3835252745` (order number `7389KG9D28FLZ2WC`, created earlier the same day, account 6). That shipment was not created by this re-run. It is now `CANCELED` on the local Partner. Create it again from the dashboard if that order should still ship. Test AWBs from the passing run were cancelled by the harness.

@@ -13,6 +13,7 @@ import { GraphiqlPlugin } from '@vendure/graphiql-plugin';
 import 'dotenv/config';
 import path from 'path';
 import { BolesaPlugin } from './plugins/bolesa';
+import { StorefrontRevalidationPlugin } from './plugins/storefront-revalidation/storefront-revalidation.plugin';
 
 const IS_DEV = process.env.APP_ENV === 'dev';
 // PORT wins because hosting platforms inject it into the environment at runtime, and that
@@ -120,6 +121,7 @@ export const config: VendureConfig = {
                 adminPasswordResetUrl: `http://localhost:${serverPort}/dashboard/reset-password`
             },
         }),
+        StorefrontRevalidationPlugin,
         DashboardPlugin.init({
             route: 'dashboard',
             appDir: IS_DEV
