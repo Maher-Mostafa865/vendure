@@ -137,7 +137,7 @@ export async function applyBolesaPhase1Schema(queryRunner: QueryRunner): Promise
         `);
 
     await queryRunner.query(
-        `ALTER TABLE "product_variant" ADD COLUMN IF NOT EXISTS "customFieldsWeightkg" double precision`,
+        `ALTER TABLE "product_variant" ADD COLUMN IF NOT EXISTS "customFieldsWeightkg" double precision NOT NULL DEFAULT 1`,
     );
     await queryRunner.query(
         `ALTER TABLE "product_variant" ADD COLUMN IF NOT EXISTS "customFieldsLengthcm" double precision`,

@@ -89,6 +89,8 @@ export interface BolesaCreateAwbInput {
     paymentType: 'cc' | 'cod';
     codAmount?: number;
     weightKg: number;
+    /** Wizard simple mode. Egypt domestic carriers reject more than one piece. */
+    numberOfPieces?: number;
     shipper: BolesaInlineAddress;
     consignee: BolesaInlineAddress;
     description?: string;

@@ -16,8 +16,22 @@ export function getBolesaCustomFields(): {
                 name: 'weightKg',
                 type: 'float',
                 public: true,
-                nullable: true,
+                nullable: false,
+                defaultValue: 1,
+                min: 0.01,
+                step: 0.01,
                 label: [{ languageCode: LanguageCode.en, value: 'Weight (kg)' }],
+                description: [
+                    {
+                        languageCode: LanguageCode.en,
+                        value: 'Required on every variant. Shipping rates and Bolesa fulfillment use this weight.',
+                    },
+                ],
+                validate: value => {
+                    if (value == null || !Number.isFinite(Number(value)) || Number(value) <= 0) {
+                        return 'Weight (kg) is required and must be greater than 0';
+                    }
+                },
             },
             {
                 name: 'lengthCm',

@@ -30,6 +30,23 @@ export class BolesaApiError extends Error {
     get isDefiniteFailure(): boolean {
         return this.status >= 400 && this.status < 500 && this.status !== 409;
     }
+
+    /** Code, summary, and any field errors Partner returned (for example number_of_pieces). */
+    detail(): string {
+        const lines = [`${this.code}: ${this.message}`];
+        const errors = (this.body as { errors?: unknown } | undefined)?.errors;
+        if (errors && typeof errors === 'object') {
+            for (const [key, value] of Object.entries(errors as Record<string, unknown>)) {
+                const msgs = Array.isArray(value) ? value : [value];
+                for (const msg of msgs) {
+                    if (typeof msg === 'string' && msg.trim()) {
+                        lines.push(`${key}: ${msg.trim()}`);
+                    }
+                }
+            }
+        }
+        return lines.join(' — ');
+    }
 }
 
 export interface BolesaRequestAuth {
@@ -119,6 +136,7 @@ export class BolesaClient {
             payment_type: input.paymentType,
             cod_amount: input.codAmount,
             weight: input.weightKg,
+            number_of_pieces: input.numberOfPieces ?? 1,
             order_number: input.orderNumber,
             description: input.description,
             meta: input.meta,

@@ -42,6 +42,7 @@ import {
 } from '../types';
 import { decideCreateAwbGate, isValidPersistedOrderId } from '../util/create-awb-gate';
 import { minorToMajor } from '../util/money';
+import { buildAwbShipmentContent } from '../util/awb-content';
 import { partnerAddressLine } from '../util/partner-address-line';
 import {
     BolesaOpsSnapshot,
@@ -1086,7 +1087,7 @@ export class BolesaShipmentService implements OnModuleInit {
                         if (!shipment) {
                             return;
                         }
-                        shipment.lastError = `${e.code}: ${e.message}`;
+                        shipment.lastError = e.detail();
                         shipment.lastErrorAt = new Date();
                         await this.connection.getRepository(txCtx, BolesaShipment).save(shipment);
                     });
@@ -1142,7 +1143,7 @@ export class BolesaShipmentService implements OnModuleInit {
                             return;
                         }
                         shipment.syncStatus = 'failed';
-                        shipment.lastError = `${e.code}: ${e.message}`;
+                        shipment.lastError = e.detail();
                         shipment.lastErrorAt = new Date();
                         await this.connection.getRepository(txCtx, BolesaShipment).save(shipment);
                         await this.patchFulfillment(txCtx, fulfillmentId, {
@@ -1159,7 +1160,7 @@ export class BolesaShipmentService implements OnModuleInit {
                                 orderId: order.id,
                                 type: HistoryEntryType.ORDER_NOTE,
                                 data: {
-                                    note: `Bolesa AWB failed: ${e.code}: ${e.message}`,
+                                    note: `Bolesa AWB failed: ${e.detail()}`,
                                 },
                             });
                         } catch (histErr: any) {
@@ -1684,12 +1685,13 @@ export class BolesaShipmentService implements OnModuleInit {
             quote?.serviceSlug ?? conn.defaultServiceSlug ?? 'default';
         const shipper = conn.shipperAddress ?? {};
         const consigneeHash = (order.shippingAddress as any)?.customFields?.bolesaCityHash;
-        const weightKg = Math.max(
-            0.01,
-            order.lines.reduce((sum, l) => {
-                const w = Number((l.productVariant as any)?.customFields?.weightKg ?? 1);
-                return sum + w * l.quantity;
-            }, 0),
+        const content = buildAwbShipmentContent(
+            order.lines.map(line => ({
+                name: line.productVariant?.name || line.productVariant?.sku,
+                quantity: line.quantity,
+                weightKg: (line.productVariant as any)?.customFields?.weightKg,
+            })),
+            order.code,
         );
         const input: BolesaCreateAwbInput = {
             orderNumber: order.code,
@@ -1698,7 +1700,8 @@ export class BolesaShipmentService implements OnModuleInit {
             shipmentOperation: 'ship',
             shipmentCategory: conn.shipmentCategory ?? 'dry',
             paymentType: preference === 'cod' ? 'cod' : 'cc',
-            weightKg,
+            weightKg: content.weightKg,
+            numberOfPieces: content.numberOfPieces,
             shipper: {
                 name: String(shipper.name ?? 'Shipper'),
                 phone: String(shipper.phone ?? '0000000000'),
@@ -1727,15 +1730,13 @@ export class BolesaShipmentService implements OnModuleInit {
                     ? String((order.shippingAddress as any).customFields.bolesaSaShortAddress)
                     : undefined,
             },
-            description: `Order ${order.code}`,
+            description: content.description,
             meta: {
                 vendure_shipment_key: shipment.shipmentKey,
                 vendure_order_code: order.code,
                 vendure_channel: String(ctx.channelId),
             },
-            parcels: order.lines.map(l => ({
-                actual_weight: Number((l.productVariant as any)?.customFields?.weightKg ?? 1) * l.quantity,
-            })),
+            parcels: content.parcels,
         };
         if (preference === 'cod') {
             // Full amount customer owes including shipping (Vendure minor → EGP major)
