@@ -3,10 +3,27 @@ import { join, resolve } from 'path';
 import { pathToFileURL } from 'url';
 import { defineConfig } from 'vite';
 
+const lodashEs = resolve(__dirname, '../../node_modules/lodash-es');
+
 export default defineConfig({
     base: '/dashboard',
     build: {
         outDir: join(__dirname, 'dist/dashboard'),
+    },
+    // recharts does `import get from 'lodash/get'` (ESM default). Plain lodash is
+    // CJS and has no default export when Vite serves it via @fs — remap to lodash-es.
+    resolve: {
+        alias: [
+            { find: '@/gql', replacement: resolve(__dirname, './src/gql/graphql.ts') },
+            { find: /^lodash$/, replacement: lodashEs },
+            { find: /^lodash\/(.*)$/, replacement: `${lodashEs}/$1.js` },
+        ],
+    },
+    optimizeDeps: {
+        include: [
+            'lodash-es',
+            'recharts',
+        ],
     },
     plugins: [
         vendureDashboardPlugin({
@@ -29,11 +46,4 @@ export default defineConfig({
             gqlOutputPath: './src/gql',
         }),
     ],
-    resolve: {
-        alias: {
-            // This allows all plugins to reference a shared set of
-            // GraphQL types.
-            '@/gql': resolve(__dirname, './src/gql/graphql.ts'),
-        },
-    },
 });

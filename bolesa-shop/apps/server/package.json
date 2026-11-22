@@ -13,7 +13,13 @@
     "build:dashboard": "vendure build dashboard",
     "start:server": "node ./dist/index.js",
     "start:worker": "node ./dist/index-worker.js",
-    "start": "vendure start all"
+    "start": "vendure start all",
+    "test:bolesa": "node --import tsx --test src/plugins/bolesa/tests/*.spec.ts",
+    "test:bolesa:migrate": "TS_NODE_PROJECT=tsconfig.integration.json node -r reflect-metadata -r ts-node/register src/plugins/bolesa/tests/integration/migrate-test-db.ts",
+    "test:bolesa:integration": "TS_NODE_PROJECT=tsconfig.integration.json node -r reflect-metadata -r ts-node/register --test --test-concurrency=1 --test-timeout=120000 src/plugins/bolesa/tests/integration/*.integration.spec.ts",
+    "test:bolesa:sandbox-e2e": "BOLESA_SANDBOX_E2E=1 TS_NODE_PROJECT=tsconfig.integration.json node -r reflect-metadata -r ts-node/register --test --test-concurrency=1 --test-timeout=300000 src/plugins/bolesa/tests/integration/sandbox-e2e.integration.spec.ts src/plugins/bolesa/tests/integration/full-flow-e2e.integration.spec.ts",
+    "test:bolesa:remote-sandbox-e2e": "BOLESA_REMOTE_SANDBOX_E2E=1 TS_NODE_PROJECT=tsconfig.integration.json node -r reflect-metadata -r ts-node/register --test --test-concurrency=1 --test-timeout=300000 src/plugins/bolesa/tests/integration/remote-sandbox-e2e.integration.spec.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
     "@vendure/asset-server-plugin": "3.8.2",
@@ -26,7 +32,9 @@
   },
   "devDependencies": {
     "@vendure/cli": "3.8.2",
+    "lodash-es": "^4.18.1",
     "ts-node": "10.9.2",
+    "tsx": "^4.20.5",
     "typescript": "5.8.2",
     "vite": "7.3.8"
   }

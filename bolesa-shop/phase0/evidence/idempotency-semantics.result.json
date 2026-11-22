@@ -1,0 +1,33 @@
+{
+  "ok": true,
+  "results": [
+    {
+      "case": "invalid_key",
+      "pass": true
+    },
+    {
+      "case": "replay_same_body",
+      "pass": true
+    },
+    {
+      "case": "different_body",
+      "pass": true
+    },
+    {
+      "case": "cache_422",
+      "pass": true,
+      "implication": "manual retry must use a new Idempotency-Key after a definite 4xx"
+    },
+    {
+      "case": "retry_5xx_same_key",
+      "pass": true
+    },
+    {
+      "case": "concurrent_409",
+      "pass": true
+    }
+  ],
+  "source": "app/Modules/PartnerApi/Http/Middleware/PartnerIdempotency.php",
+  "pestCoverage": "tests/Feature/PartnerApi/PartnerWriteEndpointsTest.php (replay + key_reused)",
+  "pestRuntime": "NOT RUN this session — Postgres 127.0.0.1:5432 down and Docker unavailable"
+}

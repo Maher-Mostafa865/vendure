@@ -1,0 +1,68 @@
+{
+  "note": "Full OpenAPI JSON could not be generated this session (APP_URL=127.0.0.1:8000 offline, no Docker). This inventory is source-verified from routes/partner.php and should be replaced by GET /api/pcl/openapi.json in sandbox.",
+  "basePath": "/api/pcl/v1",
+  "authHeader": "XP-Api-Token",
+  "idempotencyHeader": "Idempotency-Key",
+  "endpointsUsedByPhase1": [
+    {
+      "method": "GET",
+      "path": "/me"
+    },
+    {
+      "method": "POST",
+      "path": "/geo/cities/search"
+    },
+    {
+      "method": "GET",
+      "path": "/shipments/configuration"
+    },
+    {
+      "method": "GET",
+      "path": "/services"
+    },
+    {
+      "method": "POST",
+      "path": "/services/options"
+    },
+    {
+      "method": "POST",
+      "path": "/awbs"
+    },
+    {
+      "method": "GET",
+      "path": "/awbs/{trackingNumber}"
+    },
+    {
+      "method": "GET",
+      "path": "/awbs"
+    },
+    {
+      "method": "GET",
+      "path": "/awbs/{trackingNumber}/tracking"
+    },
+    {
+      "method": "POST",
+      "path": "/awbs/{trackingNumber}/cancel"
+    },
+    {
+      "method": "GET",
+      "path": "/statements"
+    },
+    {
+      "method": "GET",
+      "path": "/webhooks/events"
+    },
+    {
+      "method": "POST",
+      "path": "/webhooks/subscriptions"
+    },
+    {
+      "method": "GET",
+      "path": "/webhooks/subscriptions/{uuid}/deliveries"
+    }
+  ],
+  "sources": [
+    "app/Modules/PartnerApi/routes/partner.php",
+    "app/Modules/PartnerApi/Docs/PartnerOpenApiTransformer.php DOCUMENT_NAME=partner"
+  ]
+}

@@ -1,0 +1,28 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "emitDecoratorMetadata": true,
+    "experimentalDecorators": true,
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "types": ["node"]
+  },
+  "include": [
+    "src/plugins/bolesa/**/*.ts",
+    "src/plugins/bolesa/**/*.d.ts",
+    "src/migrations/**/*.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "src/plugins/**/dashboard/*"
+  ],
+  "ts-node": {
+    "transpileOnly": false,
+    "files": true,
+    "compilerOptions": {
+      "module": "commonjs",
+      "moduleResolution": "node"
+    }
+  }
+}
