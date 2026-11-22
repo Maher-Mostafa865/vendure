@@ -10,6 +10,7 @@ import {
     BolesaPluginOptions,
     BolesaServiceOption,
 } from '../types';
+import { finitePrice, pricePresence, PricePresence } from '../util/shipping-diagnostics';
 
 export class BolesaApiError extends Error {
     constructor(
@@ -34,6 +35,18 @@ export class BolesaApiError extends Error {
 export interface BolesaRequestAuth {
     apiBaseUrl: string;
     token: string;
+}
+
+export interface ServiceOptionPriceState {
+    slug: string;
+    ccPrice: PricePresence;
+    codPrice: PricePresence;
+}
+
+export interface ServiceOptionsObservation {
+    httpStatus: number;
+    services: BolesaServiceOption[];
+    rawPrices: ServiceOptionPriceState[];
 }
 
 @Injectable()
@@ -66,16 +79,31 @@ export class BolesaClient {
         auth: BolesaRequestAuth,
         body: Record<string, unknown>,
     ): Promise<BolesaServiceOption[]> {
-        const data = await this.request<any>(auth, 'POST', '/services/options', body);
-        const services = data?.services ?? [];
-        return (services as any[]).map(s => ({
-            slug: String(s.slug ?? ''),
-            carrierName: s.carrier?.name ?? s.carrier_name ?? s.labels?.en,
-            ccPrice: s.cc_price != null ? Number(s.cc_price) : undefined,
-            codPrice: s.cod_price != null ? Number(s.cod_price) : undefined,
-            codCollectionFee: s.cod_collection_fee != null ? Number(s.cod_collection_fee) : undefined,
-            labels: s.labels,
-        })).filter(s => s.slug);
+        const observed = await this.observeServiceOptions(auth, body);
+        return observed.services;
+    }
+
+    /**
+     * Partner `/services/options` plus raw price presence.
+     * HTTP failures throw {@link BolesaApiError} and do not become a zero price.
+     */
+    async observeServiceOptions(
+        auth: BolesaRequestAuth,
+        body: Record<string, unknown>,
+    ): Promise<ServiceOptionsObservation> {
+        const raw = await this.requestRaw(auth, 'POST', '/services/options', body);
+        const data = (raw.data?.data ?? raw.data) as any;
+        const rows = (data?.services ?? []) as any[];
+        const mapped = rows.map(mapServiceOption).filter(row => row.option.slug);
+        return {
+            httpStatus: raw.status,
+            services: mapped.map(row => row.option),
+            rawPrices: mapped.map(row => ({
+                slug: row.option.slug,
+                ccPrice: row.ccPrice,
+                codPrice: row.codPrice,
+            })),
+        };
     }
 
     async createAwb(
@@ -229,6 +257,27 @@ export class BolesaClient {
 
         return { status: response.status, data, headers: response.headers };
     }
+}
+
+export function mapServiceOption(raw: any): {
+    option: BolesaServiceOption;
+    ccPrice: PricePresence;
+    codPrice: PricePresence;
+} {
+    const ccPrice = pricePresence(raw?.cc_price);
+    const codPrice = pricePresence(raw?.cod_price);
+    return {
+        ccPrice,
+        codPrice,
+        option: {
+            slug: String(raw?.slug ?? ''),
+            carrierName: raw?.carrier?.name ?? raw?.carrier_name ?? raw?.labels?.en,
+            ccPrice: finitePrice(raw?.cc_price),
+            codPrice: finitePrice(raw?.cod_price),
+            codCollectionFee: finitePrice(raw?.cod_collection_fee),
+            labels: raw?.labels,
+        },
+    };
 }
 
 function mapAwb(row: any): BolesaAwb {

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { afterEach, describe, it, mock } from 'node:test';
 
-import { BolesaApiError, BolesaClient } from '../services/bolesa-client.service';
+import { BolesaApiError, BolesaClient, mapServiceOption } from '../services/bolesa-client.service';
 
 function mockFetch(status: number, body: unknown) {
     return mock.fn(async () => ({
@@ -20,6 +20,53 @@ describe('BolesaClient', () => {
         if (originalFetch) {
             globalThis.fetch = originalFetch;
         }
+    });
+
+    it('maps null, zero, and positive service prices without turning null into zero', () => {
+        const missing = mapServiceOption({ slug: 'bosta', cc_price: null, cod_price: null });
+        assert.equal(missing.ccPrice, 'null');
+        assert.equal(missing.codPrice, 'null');
+        assert.equal(missing.option.ccPrice, undefined);
+        assert.equal(missing.option.codPrice, undefined);
+
+        const free = mapServiceOption({ slug: 'bosta', cc_price: 0, cod_price: 0 });
+        assert.equal(free.ccPrice, 'zero');
+        assert.equal(free.option.ccPrice, 0);
+        assert.equal(free.option.codPrice, 0);
+
+        const priced = mapServiceOption({ slug: 'bosta', cc_price: 45.5, cod_price: 50 });
+        assert.equal(priced.ccPrice, 'positive');
+        assert.equal(priced.option.ccPrice, 45.5);
+        assert.equal(priced.option.codPrice, 50);
+    });
+
+    it('observeServiceOptions reports HTTP 200 and raw null prices', async () => {
+        originalFetch = globalThis.fetch;
+        globalThis.fetch = mockFetch(200, {
+            success: true,
+            data: { services: [{ slug: 'bosta', cc_price: null, cod_price: null }] },
+        });
+        const client = new BolesaClient({ apiBaseUrl: auth.apiBaseUrl, encryptionSecret: 'x' });
+        const observed = await client.observeServiceOptions(auth, { payment_type: 'cc' });
+        assert.equal(observed.httpStatus, 200);
+        assert.equal(observed.rawPrices[0].ccPrice, 'null');
+        assert.equal(observed.rawPrices[0].codPrice, 'null');
+        assert.equal(observed.services[0].ccPrice, undefined);
+    });
+
+    it('service options HTTP 500 throws and does not yield a zero price', async () => {
+        originalFetch = globalThis.fetch;
+        globalThis.fetch = mockFetch(500, { success: false, message: 'Bolesa API error 500' });
+        const client = new BolesaClient({ apiBaseUrl: auth.apiBaseUrl, encryptionSecret: 'x' });
+        await assert.rejects(
+            () => client.serviceOptions(auth, { payment_type: 'cc' }),
+            (err: unknown) => {
+                assert.ok(err instanceof BolesaApiError);
+                assert.equal(err.status, 500);
+                assert.equal((err as any).price, undefined);
+                return true;
+            },
+        );
     });
 
     it('maps successful service options', async () => {

@@ -1,4 +1,4 @@
-import { Button, defineDashboardExtension } from '@vendure/dashboard';
+import { api, Button, defineDashboardExtension } from '@vendure/dashboard';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 /**
@@ -68,22 +68,14 @@ const cancelMutation = `
   }
 `;
 
-async function adminApi<T = any>(query: string, variables?: Record<string, unknown>): Promise<T> {
-    // Always hit the Vendure Admin API on the same origin (works under /dashboard).
-    const res = await fetch(`${window.location.origin}/admin-api`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({ query, variables }),
-    });
-    if (!res.ok) {
-        throw new Error(`Admin API HTTP ${res.status}`);
+async function adminApi<T = any>(document: string, variables?: Record<string, unknown>): Promise<T> {
+    // Use the dashboard client so the bearer session and channel token are sent.
+    // A bare cookie fetch is anonymous when the dashboard session lives in localStorage.
+    const vars = variables ?? {};
+    if (/^\s*mutation\b/.test(document)) {
+        return api.mutate(document, vars) as Promise<T>;
     }
-    const json = await res.json();
-    if (json.errors?.length) {
-        throw new Error(json.errors.map((e: any) => e.message).join('; '));
-    }
-    return json.data as T;
+    return api.query<T>(document, vars);
 }
 
 function BolesaConnectionPage() {
@@ -189,45 +181,21 @@ function ShipmentCard({
     const { data } = useQuery({
         queryKey: ['bolesaShipment', fulfillmentId],
         queryFn: async () => {
-            const res = await fetch('/admin-api', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                credentials: 'include',
-                body: JSON.stringify({
-                    query: shipmentQuery,
-                    variables: { fulfillmentId },
-                }),
-            });
-            return (await res.json()).data?.bolesaShipment;
+            const data = await adminApi<{ bolesaShipment: any }>(shipmentQuery, { fulfillmentId });
+            return data.bolesaShipment;
         },
     });
     const retry = useMutation({
         mutationFn: async () => {
-            const res = await fetch('/admin-api', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                credentials: 'include',
-                body: JSON.stringify({
-                    query: retryMutation,
-                    variables: { fulfillmentId },
-                }),
-            });
-            return (await res.json()).data?.bolesaRetryShipment;
+            const data = await adminApi<{ bolesaRetryShipment: any }>(retryMutation, { fulfillmentId });
+            return data.bolesaRetryShipment;
         },
         onSuccess: () => qc.invalidateQueries({ queryKey: ['bolesaShipment', fulfillmentId] }),
     });
     const cancel = useMutation({
         mutationFn: async () => {
-            const res = await fetch('/admin-api', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                credentials: 'include',
-                body: JSON.stringify({
-                    query: cancelMutation,
-                    variables: { fulfillmentId },
-                }),
-            });
-            return (await res.json()).data?.bolesaCancelShipment;
+            const data = await adminApi<{ bolesaCancelShipment: any }>(cancelMutation, { fulfillmentId });
+            return data.bolesaCancelShipment;
         },
         onSuccess: () => qc.invalidateQueries({ queryKey: ['bolesaShipment', fulfillmentId] }),
     });

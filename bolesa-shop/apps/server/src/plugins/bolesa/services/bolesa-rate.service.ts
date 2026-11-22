@@ -1,4 +1,5 @@
 import { Inject, Injectable, Optional } from '@nestjs/common';
+import { JsonCompatible } from '@vendure/common/lib/shared-types';
 import {
     CacheService,
     Injector,
@@ -11,8 +12,18 @@ import { BOLESA_PLUGIN_OPTIONS, loggerCtx } from '../constants';
 import { BolesaPluginOptions, BolesaServiceOption, PaymentPreference, PersistedBolesaQuote } from '../types';
 import { majorToMinor, minorToMajor } from '../util/money';
 import { partnerAddressLine } from '../util/partner-address-line';
+import { mappedPricePresence, PricePresence } from '../util/shipping-diagnostics';
 import { BolesaConnectionService } from './bolesa-connection.service';
-import { BolesaClient } from './bolesa-client.service';
+import { BolesaClient, ServiceOptionPriceState } from './bolesa-client.service';
+
+export interface BolesaRateLookup {
+    services: BolesaServiceOption[];
+    httpStatus: number | null;
+    cacheHit: boolean;
+    /** Raw Partner presence. Empty when the lookup was served from cache. */
+    rawPrices: ServiceOptionPriceState[];
+    skipReason?: 'missing_resolution_hash';
+}
 
 @Injectable()
 export class BolesaRateService {
@@ -49,19 +60,39 @@ export class BolesaRateService {
         order: Order,
         preference: PaymentPreference,
     ): Promise<BolesaServiceOption[]> {
+        const lookup = await this.lookupOptionsForOrder(ctx, order, preference);
+        return lookup.services;
+    }
+
+    async lookupOptionsForOrder(
+        ctx: RequestContext,
+        order: Order,
+        preference: PaymentPreference,
+    ): Promise<BolesaRateLookup> {
         const conn = await this.connectionService.requireActive(ctx);
         const shipper = conn.shipperAddress;
         const consigneeHash = (order.shippingAddress as any)?.customFields?.bolesaCityHash;
         if (!shipper?.resolution_hash || !consigneeHash) {
-            return [];
+            return {
+                services: [],
+                httpStatus: null,
+                cacheHit: false,
+                rawPrices: [],
+                skipReason: 'missing_resolution_hash',
+            };
         }
 
         const fingerprint = BolesaRateService.orderFingerprint(order, preference);
         const cacheKey = `bolesa:rates:${ctx.channelId}:${fingerprint}`;
         if (this.cache) {
-            const cached = await this.cache.get<any[]>(cacheKey);
+            const cached = await this.cache.get<JsonCompatible<BolesaServiceOption[]>>(cacheKey);
             if (cached?.length) {
-                return cached as BolesaServiceOption[];
+                return {
+                    services: cached as BolesaServiceOption[],
+                    httpStatus: null,
+                    cacheHit: true,
+                    rawPrices: [],
+                };
             }
         }
 
@@ -107,13 +138,21 @@ export class BolesaRateService {
         }
 
         const auth = this.connectionService.authFor(conn);
-        const services = await this.client.serviceOptions(auth, body);
-        if (this.cache) {
-            await this.cache.set(cacheKey, services as any[], {
+        const observed = await this.client.observeServiceOptions(auth, body);
+        // A 200 with only null prices is an upstream pricing failure, not a quote.
+        // Caching it hides bolesa-shipping for the whole TTL after prices recover.
+        // A real zero is finite and is cached.
+        if (this.cache && observed.services.some(serviceHasFinitePrice)) {
+            await this.cache.set(cacheKey, observed.services as any[], {
                 ttl: this.options.rateCacheTtlMs ?? 600_000,
             });
         }
-        return services;
+        return {
+            services: observed.services,
+            httpStatus: observed.httpStatus,
+            cacheHit: false,
+            rawPrices: observed.rawPrices,
+        };
     }
 
     pickOption(
@@ -163,6 +202,23 @@ export class BolesaRateService {
         return { priceMinor, quote };
     }
 
+    priceStateFor(
+        lookup: BolesaRateLookup,
+        option: BolesaServiceOption | undefined,
+    ): { ccPrice: PricePresence; codPrice: PricePresence } {
+        if (!option) {
+            return { ccPrice: 'undefined', codPrice: 'undefined' };
+        }
+        const raw = lookup.rawPrices.find(row => row.slug === option.slug);
+        if (raw) {
+            return { ccPrice: raw.ccPrice, codPrice: raw.codPrice };
+        }
+        return {
+            ccPrice: mappedPricePresence(option.ccPrice),
+            codPrice: mappedPricePresence(option.codPrice),
+        };
+    }
+
     /** Whitelist for Shop API ShippingMethodQuote.metadata — never include contracts/fees breakdown. */
     publicMetadata(quote: PersistedBolesaQuote) {
         return {
@@ -170,6 +226,10 @@ export class BolesaRateService {
             carrierName: quote.carrierName,
         };
     }
+}
+
+function serviceHasFinitePrice(option: BolesaServiceOption): boolean {
+    return Number.isFinite(option.ccPrice) || Number.isFinite(option.codPrice);
 }
 
 /** Late-bind CacheService into rate service from ShippingCalculator.init */
