@@ -9,7 +9,13 @@ import {
 } from '@vendure/core';
 
 import { BOLESA_PLUGIN_OPTIONS, loggerCtx } from '../constants';
-import { BolesaPluginOptions, BolesaServiceOption, PaymentPreference, PersistedBolesaQuote } from '../types';
+import {
+    BolesaPluginOptions,
+    BolesaServiceChoice,
+    BolesaServiceOption,
+    PaymentPreference,
+    PersistedBolesaQuote,
+} from '../types';
 import { majorToMinor, minorToMajor } from '../util/money';
 import { partnerAddressLine } from '../util/partner-address-line';
 import { mappedPricePresence, PricePresence } from '../util/shipping-diagnostics';
@@ -168,6 +174,35 @@ export class BolesaRateService {
         return services[0];
     }
 
+    /**
+     * Every Partner service that has a real price. Unpriced rows are omitted.
+     * A legitimate zero stays. Pricing uses {@link buildQuote}.
+     */
+    quoteChoices(
+        services: BolesaServiceOption[],
+        preference: PaymentPreference,
+        markupPercent: number,
+        codFeeMode: 'absorb' | 'passToCustomer',
+        currencyCode: string,
+    ): BolesaServiceChoice[] {
+        const choices: BolesaServiceChoice[] = [];
+        for (const option of services) {
+            const built = this.buildQuote(option, preference, markupPercent, codFeeMode, currencyCode);
+            if (!built) {
+                continue;
+            }
+            const name = option.carrierName || option.label || option.slug;
+            choices.push({
+                slug: option.slug,
+                name,
+                label: option.label && option.label !== name ? option.label : undefined,
+                logoUrl: option.logoUrl,
+                priceMinor: built.priceMinor,
+            });
+        }
+        return choices;
+    }
+
     buildQuote(
         option: BolesaServiceOption,
         preference: PaymentPreference,
@@ -226,6 +261,15 @@ export class BolesaRateService {
             carrierName: quote.carrierName,
         };
     }
+}
+
+/** Shopper choice wins. Otherwise the shipping-method slug, including `auto`. */
+export function resolveCarrierSlug(selected: unknown, configured: string | undefined): string {
+    if (typeof selected === 'string' && selected.trim()) {
+        return selected.trim();
+    }
+    const fallback = configured?.trim();
+    return fallback || 'auto';
 }
 
 function serviceHasFinitePrice(option: BolesaServiceOption): boolean {

@@ -6,7 +6,7 @@ import { bolesaEligibilityChecker } from '../config/bolesa-eligibility-checker';
 import { bolesaShippingCalculator } from '../config/bolesa-shipping-calculator';
 import { BolesaApiError } from '../services/bolesa-client.service';
 import { BolesaConnectionService } from '../services/bolesa-connection.service';
-import { BolesaRateService } from '../services/bolesa-rate.service';
+import { BolesaRateService, resolveCarrierSlug } from '../services/bolesa-rate.service';
 import { BolesaServiceOption } from '../types';
 import { pricePresence } from '../util/shipping-diagnostics';
 
@@ -166,12 +166,46 @@ describe('eligible shipping calculation', () => {
         assert.notEqual(result.price, 0);
     });
 
+    it('returns every priced carrier and charges the shopper-selected service', async () => {
+        await wire(async () => ({
+            httpStatus: 200,
+            services: [
+                { slug: 'jt', carrierName: 'J&T Express', label: 'J&T Express Egypt Standard', ccPrice: 77.61, codPrice: 77.61 },
+                { slug: 'aramex', carrierName: 'Aramex', ccPrice: 95.54, codPrice: 95.54 },
+                { slug: 'arrive', carrierName: 'Arrive', ccPrice: null, codPrice: null },
+                { slug: 'speedaf', carrierName: 'Speedaf', ccPrice: 80.37, codPrice: 80.37 },
+            ],
+            rawPrices: [],
+        }));
+        const selected = order();
+        selected.customFields.bolesaServiceSlug = 'speedaf';
+        const result = await bolesaShippingCalculator.calculate(ctx, selected, args, {} as any);
+        assert.ok(result);
+        assert.equal(result.price, 8037);
+        const options = (result.metadata as any).options;
+        assert.equal(options.length, 3);
+        assert.deepEqual(options.map((choice: { slug: string; priceMinor: number }) => [choice.slug, choice.priceMinor]), [
+            ['jt', 7761],
+            ['aramex', 9554],
+            ['speedaf', 8037],
+        ]);
+        assert.equal((result.metadata as any).serviceSlug, 'speedaf');
+    });
+
     it('does not turn a Partner HTTP error into a zero shipping price', async () => {
         await wire(async () => {
             throw new BolesaApiError('http_500', 'Bolesa API error 500', 500);
         });
         const result = await bolesaShippingCalculator.calculate(ctx, order(), args, {} as any);
         assert.equal(result, undefined);
+    });
+});
+
+describe('resolveCarrierSlug', () => {
+    it('prefers the shopper choice over auto', () => {
+        assert.equal(resolveCarrierSlug('speedaf', 'auto'), 'speedaf');
+        assert.equal(resolveCarrierSlug('  ', 'auto'), 'auto');
+        assert.equal(resolveCarrierSlug(undefined, undefined), 'auto');
     });
 });
 

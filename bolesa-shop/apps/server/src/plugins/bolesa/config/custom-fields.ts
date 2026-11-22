@@ -81,6 +81,13 @@ export function getBolesaCustomFields(): {
                 label: [{ languageCode: LanguageCode.en, value: 'Payment preference (cod|prepaid)' }],
             },
             {
+                name: 'bolesaServiceSlug',
+                type: 'string',
+                public: true,
+                nullable: true,
+                label: [{ languageCode: LanguageCode.en, value: 'Selected Bolesa carrier service' }],
+            },
+            {
                 name: 'bolesaQuote',
                 type: 'text',
                 public: false,

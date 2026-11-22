@@ -30,6 +30,7 @@ interface ShippingMethod {
   code: string;
   description?: string | null;
   priceWithTax: number;
+  metadata?: Record<string, unknown> | null;
 }
 
 interface PaymentMethod {

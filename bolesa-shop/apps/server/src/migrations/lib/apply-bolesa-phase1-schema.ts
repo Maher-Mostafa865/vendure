@@ -168,6 +168,9 @@ export async function applyBolesaPhase1Schema(queryRunner: QueryRunner): Promise
     await queryRunner.query(
         `ALTER TABLE "order" ADD COLUMN IF NOT EXISTS "customFieldsBolesaquote" text`,
     );
+    await queryRunner.query(
+        `ALTER TABLE "order" ADD COLUMN IF NOT EXISTS "customFieldsBolesaserviceslug" character varying(255)`,
+    );
 
     await queryRunner.query(
         `ALTER TABLE "fulfillment" ADD COLUMN IF NOT EXISTS "customFieldsBolesatrackingnumber" character varying(255)`,
@@ -196,6 +199,7 @@ export async function dropBolesaPhase1Schema(queryRunner: QueryRunner): Promise<
     await queryRunner.query(
         `ALTER TABLE "fulfillment" DROP COLUMN IF EXISTS "customFieldsBolesatrackingnumber"`,
     );
+    await queryRunner.query(`ALTER TABLE "order" DROP COLUMN IF EXISTS "customFieldsBolesaserviceslug"`);
     await queryRunner.query(`ALTER TABLE "order" DROP COLUMN IF EXISTS "customFieldsBolesaquote"`);
     await queryRunner.query(`ALTER TABLE "order" DROP COLUMN IF EXISTS "customFieldsPaymentpreference"`);
     await queryRunner.query(`ALTER TABLE "address" DROP COLUMN IF EXISTS "customFieldsDistrict"`);

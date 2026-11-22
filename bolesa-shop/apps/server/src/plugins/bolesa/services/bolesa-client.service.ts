@@ -272,6 +272,8 @@ export function mapServiceOption(raw: any): {
         option: {
             slug: String(raw?.slug ?? ''),
             carrierName: raw?.carrier?.name ?? raw?.carrier_name ?? raw?.labels?.en,
+            label: typeof raw?.labels?.en === 'string' ? raw.labels.en : undefined,
+            logoUrl: typeof raw?.carrier?.logo === 'string' ? raw.carrier.logo : undefined,
             ccPrice: finitePrice(raw?.cc_price),
             codPrice: finitePrice(raw?.cod_price),
             codCollectionFee: finitePrice(raw?.cod_collection_fee),

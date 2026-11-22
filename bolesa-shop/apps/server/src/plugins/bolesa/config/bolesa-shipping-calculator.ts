@@ -3,7 +3,7 @@ import { LanguageCode, Logger, ShippingCalculator } from '@vendure/core';
 import { BOLESA_SHIPPING_CALCULATOR_CODE, loggerCtx } from '../constants';
 import { BolesaApiError } from '../services/bolesa-client.service';
 import { BolesaConnectionService } from '../services/bolesa-connection.service';
-import { bindRateCache, BolesaRateService } from '../services/bolesa-rate.service';
+import { bindRateCache, BolesaRateService, resolveCarrierSlug } from '../services/bolesa-rate.service';
 import { PaymentPreference } from '../types';
 import { PricePresence } from '../util/shipping-diagnostics';
 
@@ -61,9 +61,29 @@ export const bolesaShippingCalculator = new ShippingCalculator({
         try {
             const conn = await connectionService.requireActive(ctx);
             const lookup = await rateService.lookupOptionsForOrder(ctx, order, preference);
-            const option = rateService.pickOption(lookup.services, args.carrierServiceSlug);
+            const configuredSlug = args.carrierServiceSlug || 'auto';
+            const requestedSlug = resolveCarrierSlug(
+                (order as any).customFields?.bolesaServiceSlug,
+                configuredSlug,
+            );
+            const choices = rateService.quoteChoices(
+                lookup.services,
+                preference,
+                conn.markupPercent ?? 0,
+                conn.codFeeMode ?? 'absorb',
+                ctx.channel.defaultCurrencyCode,
+            );
+            const chosen =
+                choices.find(choice => choice.slug === requestedSlug) ??
+                (requestedSlug !== configuredSlug
+                    ? choices.find(choice => choice.slug === configuredSlug)
+                    : undefined) ??
+                (configuredSlug === 'auto' || requestedSlug === 'auto' ? choices[0] : undefined);
+            const option = chosen
+                ? lookup.services.find(service => service.slug === chosen.slug)
+                : undefined;
             const prices = rateService.priceStateFor(lookup, option);
-            if (!option) {
+            if (!option || !chosen) {
                 logCalculation({
                     executed: true,
                     cacheHit: lookup.cacheHit,
@@ -74,9 +94,11 @@ export const bolesaShippingCalculator = new ShippingCalculator({
                     outcome: 'undefined',
                     reason: lookup.skipReason === 'missing_resolution_hash'
                         ? 'missing_resolution_hash'
-                        : lookup.services.length
-                          ? 'slug_not_found'
-                          : 'no_services',
+                        : !lookup.services.length
+                          ? 'no_services'
+                          : choices.length
+                            ? 'slug_not_found'
+                            : 'missing_price',
                     priceMinor: null,
                     quotePersisted: false,
                 });
@@ -121,7 +143,10 @@ export const bolesaShippingCalculator = new ShippingCalculator({
                 // Bolesa fee breakdown already includes VAT components; avoid double tax.
                 priceIncludesTax: true,
                 taxRate: 0,
-                metadata: rateService.publicMetadata(built.quote),
+                metadata: {
+                    ...rateService.publicMetadata(built.quote),
+                    options: choices,
+                },
             };
         } catch (e: any) {
             const httpStatus = e instanceof BolesaApiError ? e.status : null;

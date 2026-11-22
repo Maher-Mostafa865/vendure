@@ -66,7 +66,7 @@ import {
 } from '../util/status-map';
 import { BolesaApiError, BolesaClient } from './bolesa-client.service';
 import { BolesaConnectionService } from './bolesa-connection.service';
-import { BolesaRateService } from './bolesa-rate.service';
+import { BolesaRateService, resolveCarrierSlug } from './bolesa-rate.service';
 
 @Injectable()
 export class BolesaShipmentService implements OnModuleInit {
@@ -683,10 +683,11 @@ export class BolesaShipmentService implements OnModuleInit {
         const services = await this.rateService.getOptionsForOrder(ctx, order, preference);
         const conn = await this.connectionService.requireActive(ctx);
         // Prefer shipping line metadata slug if present
-        const metaSlug =
+        const configuredSlug =
             (order.shippingLines?.[0] as any)?.shippingMethod?.calculator?.args?.find(
                 (a: any) => a.name === 'carrierServiceSlug',
             )?.value ?? conn.defaultServiceSlug ?? 'auto';
+        const metaSlug = resolveCarrierSlug((order as any).customFields?.bolesaServiceSlug, configuredSlug);
         const option = this.rateService.pickOption(services, metaSlug);
         if (!option) {
             return;

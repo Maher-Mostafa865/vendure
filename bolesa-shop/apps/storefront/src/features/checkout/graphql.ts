@@ -88,6 +88,7 @@ export const GetEligibleShippingMethodsQuery = graphql(`
             code
             description
             priceWithTax
+            metadata
         }
     }
 `);

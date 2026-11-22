@@ -62,10 +62,22 @@ export interface BolesaCityResult {
 export interface BolesaServiceOption {
     slug: string;
     carrierName?: string;
+    /** English service label from Partner, when it differs from the carrier name. */
+    label?: string;
+    logoUrl?: string;
     ccPrice?: number;
     codPrice?: number;
     codCollectionFee?: number;
     labels?: Record<string, string>;
+}
+
+/** One priced carrier the shopper can choose. No fee breakdown or address ids. */
+export interface BolesaServiceChoice {
+    slug: string;
+    name: string;
+    label?: string;
+    logoUrl?: string;
+    priceMinor: number;
 }
 
 export interface BolesaCreateAwbInput {

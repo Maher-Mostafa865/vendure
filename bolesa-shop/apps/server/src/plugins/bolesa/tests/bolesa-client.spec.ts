@@ -34,10 +34,19 @@ describe('BolesaClient', () => {
         assert.equal(free.option.ccPrice, 0);
         assert.equal(free.option.codPrice, 0);
 
-        const priced = mapServiceOption({ slug: 'bosta', cc_price: 45.5, cod_price: 50 });
+        const priced = mapServiceOption({
+            slug: 'jt_express_egy_dom_dry_std_dlv',
+            cc_price: 77.61,
+            cod_price: 77.61,
+            carrier: { name: 'J&T Express', logo: 'https://cdn.example/jt.png' },
+            labels: { en: 'J&T Express Egypt Standard' },
+            price: { fee_breakdown: { components: [{ code: 'shipping_fees', amount: 64.78 }] } },
+        });
         assert.equal(priced.ccPrice, 'positive');
-        assert.equal(priced.option.ccPrice, 45.5);
-        assert.equal(priced.option.codPrice, 50);
+        assert.equal(priced.option.ccPrice, 77.61);
+        assert.equal(priced.option.carrierName, 'J&T Express');
+        assert.equal(priced.option.logoUrl, 'https://cdn.example/jt.png');
+        assert.equal((priced.option as any).fee_breakdown, undefined);
     });
 
     it('observeServiceOptions reports HTTP 200 and raw null prices', async () => {

@@ -180,6 +180,24 @@ export async function setShippingAddress(
     revalidatePath(`/${locale}/checkout`);
 }
 
+export async function selectBolesaService(slug: string | null) {
+    const data = await shopRawQuery<{
+        setOrderCustomFields: { __typename: string; errorCode?: string; message?: string };
+    }>(
+        `mutation SelectBolesaService($input: UpdateOrderInput!) {
+            setOrderCustomFields(input: $input) {
+                __typename
+                ... on Order { id }
+                ... on ErrorResult { errorCode message }
+            }
+        }`,
+        { input: { customFields: { bolesaServiceSlug: slug } } },
+    );
+    if (data.setOrderCustomFields.__typename !== 'Order') {
+        throw new Error(data.setOrderCustomFields.message || 'Failed to save the shipping company');
+    }
+}
+
 export async function setShippingMethod(shippingMethodId: string) {
     const result = await mutate(
         SetOrderShippingMethodMutation,

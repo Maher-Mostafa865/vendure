@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Loader2, MapPin, Truck, CreditCard, Edit, Mail } from 'lucide-react';
 import { useCheckout } from '../checkout-provider';
+import { bolesaChoicesFromMetadata, selectedBolesaSlug } from '../bolesa-choices';
 import { placeOrder as placeOrderAction } from '../actions';
 import { Price } from '@/features/pricing/price';
 import {useTranslations} from 'next-intl';
@@ -14,7 +15,22 @@ interface ReviewStepProps {
 
 export default function ReviewStep({ onEditStep }: ReviewStepProps) {
   const t = useTranslations('Checkout');
-  const { order, paymentMethods, selectedPaymentMethodCode, isGuest } = useCheckout();
+  const { order, paymentMethods, selectedPaymentMethodCode, shippingMethods, isGuest } = useCheckout();
+  const deliveryName = (() => {
+    const line = order.shippingLines?.[0];
+    if (!line) {
+      return null;
+    }
+    const bolesa = shippingMethods.find((method) => method.code === 'bolesa-shipping');
+    if (bolesa && line.shippingMethod.id === bolesa.id) {
+      const slug = selectedBolesaSlug(bolesa.metadata);
+      const choice = bolesaChoicesFromMetadata(bolesa.metadata).find((option) => option.slug === slug);
+      if (choice) {
+        return choice.label ? `${choice.name} — ${choice.label}` : choice.name;
+      }
+    }
+    return line.shippingMethod.name;
+  })();
   const [loading, setLoading] = useState(false);
 
   const selectedPaymentMethod = paymentMethods.find(
@@ -109,7 +125,7 @@ export default function ReviewStep({ onEditStep }: ReviewStepProps) {
           {order.shippingLines && order.shippingLines.length > 0 ? (
             <div className="text-sm space-y-3">
               <div>
-                <p className="font-medium">{order.shippingLines[0].shippingMethod.name}</p>
+                <p className="font-medium">{deliveryName}</p>
                 <p className="text-muted-foreground">
                   {order.shippingLines[0].priceWithTax === 0
                     ? t('free')
