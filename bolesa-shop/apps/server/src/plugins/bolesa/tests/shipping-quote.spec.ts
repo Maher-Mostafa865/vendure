@@ -72,14 +72,22 @@ describe('BolesaRateService.buildQuote', () => {
     });
 
     it('keeps a legitimate zero as price 0 minor units', () => {
-        const free: BolesaServiceOption = { slug: 'bosta', ccPrice: 0, codPrice: 0 };
+        const free: BolesaServiceOption = { slug: 'bosta', ccPrice: 0, codPrice: 0, currencyCode: 'EGP' };
         const built = rateService.buildQuote(free, 'prepaid', 0, 'absorb', 'EGP');
         assert.ok(built);
         assert.equal(built.priceMinor, 0);
     });
 
+    it('refuses a priced quote whose currency is not the channel currency', () => {
+        const sar: BolesaServiceOption = { slug: 'bosta', ccPrice: 11.4, codPrice: 11.4, currencyCode: 'SAR' };
+        assert.equal(rateService.buildQuote(sar, 'prepaid', 0, 'absorb', 'EGP'), undefined);
+        assert.equal(rateService.buildQuote(sar, 'prepaid', 0, 'absorb', 'USD'), undefined);
+        const unnamed: BolesaServiceOption = { slug: 'bosta', ccPrice: 11.4, codPrice: 11.4 };
+        assert.equal(rateService.buildQuote(unnamed, 'prepaid', 0, 'absorb', 'SAR'), undefined);
+    });
+
     it('converts a positive major price to minor units', () => {
-        const priced: BolesaServiceOption = { slug: 'bosta', ccPrice: 40, codPrice: 45 };
+        const priced: BolesaServiceOption = { slug: 'bosta', ccPrice: 40, codPrice: 45, currencyCode: 'EGP' };
         const built = rateService.buildQuote(priced, 'prepaid', 0, 'absorb', 'EGP');
         assert.ok(built);
         assert.equal(built.priceMinor, 4000);
@@ -140,7 +148,7 @@ describe('eligible shipping calculation', () => {
         let cached = false;
         await wire(async () => ({
             httpStatus: 200,
-            services: [{ slug: 'bosta', ccPrice: 0, codPrice: 0 }],
+            services: [{ slug: 'bosta', ccPrice: 0, codPrice: 0, currencyCode: 'EGP' }],
             rawPrices: [{ slug: 'bosta', ccPrice: 'zero', codPrice: 'zero' }],
         }), {
             get: async () => undefined,
@@ -157,7 +165,7 @@ describe('eligible shipping calculation', () => {
     it('returns a positive minor price for a valid Partner price', async () => {
         await wire(async () => ({
             httpStatus: 200,
-            services: [{ slug: 'bosta', ccPrice: 40, codPrice: 45 }],
+            services: [{ slug: 'bosta', ccPrice: 40, codPrice: 45, currencyCode: 'EGP' }],
             rawPrices: [{ slug: 'bosta', ccPrice: 'positive', codPrice: 'positive' }],
         }));
         const result = await bolesaShippingCalculator.calculate(ctx, order(), args, {} as any);
@@ -170,10 +178,10 @@ describe('eligible shipping calculation', () => {
         await wire(async () => ({
             httpStatus: 200,
             services: [
-                { slug: 'jt', carrierName: 'J&T Express', label: 'J&T Express Egypt Standard', ccPrice: 77.61, codPrice: 77.61 },
-                { slug: 'aramex', carrierName: 'Aramex', ccPrice: 95.54, codPrice: 95.54 },
-                { slug: 'arrive', carrierName: 'Arrive', ccPrice: null, codPrice: null },
-                { slug: 'speedaf', carrierName: 'Speedaf', ccPrice: 80.37, codPrice: 80.37 },
+                { slug: 'jt', carrierName: 'J&T Express', label: 'J&T Express Egypt Standard', ccPrice: 77.61, codPrice: 77.61, currencyCode: 'EGP' },
+                { slug: 'aramex', carrierName: 'Aramex', ccPrice: 95.54, codPrice: 95.54, currencyCode: 'EGP' },
+                { slug: 'arrive', carrierName: 'Arrive', ccPrice: null, codPrice: null, currencyCode: 'EGP' },
+                { slug: 'speedaf', carrierName: 'Speedaf', ccPrice: 80.37, codPrice: 80.37, currencyCode: 'EGP' },
             ],
             rawPrices: [],
         }));
@@ -192,12 +200,53 @@ describe('eligible shipping calculation', () => {
         assert.equal((result.metadata as any).serviceSlug, 'speedaf');
     });
 
+    it('does not charge a SAR price on an EGP channel', async () => {
+        await wire(async () => ({
+            httpStatus: 200,
+            services: [{ slug: 'bosta', ccPrice: 11.4, codPrice: 11.4, currencyCode: 'SAR' }],
+            rawPrices: [{ slug: 'bosta', ccPrice: 'positive', codPrice: 'positive' }],
+        }));
+        const result = await bolesaShippingCalculator.calculate(ctx, order(), args, {} as any);
+        assert.equal(result, undefined);
+    });
+
+    it('does not charge a price when Partner omits the currency', async () => {
+        await wire(async () => ({
+            httpStatus: 200,
+            services: [{ slug: 'bosta', ccPrice: 11.4, codPrice: 11.4 }],
+            rawPrices: [{ slug: 'bosta', ccPrice: 'positive', codPrice: 'positive' }],
+        }));
+        const result = await bolesaShippingCalculator.calculate(ctx, order(), args, {} as any);
+        assert.equal(result, undefined);
+    });
+
+    it('charges a matching channel currency in minor units', async () => {
+        await wire(async () => ({
+            httpStatus: 200,
+            services: [{ slug: 'bosta', ccPrice: 11.4, codPrice: 11.4, currencyCode: 'egp' }],
+            rawPrices: [{ slug: 'bosta', ccPrice: 'positive', codPrice: 'positive' }],
+        }));
+        const result = await bolesaShippingCalculator.calculate(ctx, order(), args, {} as any);
+        assert.ok(result);
+        assert.equal(result.price, 1140);
+        assert.equal((result.metadata as any).options[0].priceMinor, 1140);
+    });
+
     it('does not turn a Partner HTTP error into a zero shipping price', async () => {
         await wire(async () => {
             throw new BolesaApiError('http_500', 'Bolesa API error 500', 500);
         });
         const result = await bolesaShippingCalculator.calculate(ctx, order(), args, {} as any);
         assert.equal(result, undefined);
+    });
+});
+
+describe('rate cache fingerprint', () => {
+    it('changes when the channel currency changes', () => {
+        const sample = order();
+        const egp = BolesaRateService.orderFingerprint(sample, 'prepaid', 'EGP');
+        const sar = BolesaRateService.orderFingerprint(sample, 'prepaid', 'SAR');
+        assert.notEqual(egp, sar);
     });
 });
 

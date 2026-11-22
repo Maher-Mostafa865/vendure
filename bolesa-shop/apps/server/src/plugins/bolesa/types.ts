@@ -68,6 +68,11 @@ export interface BolesaServiceOption {
     ccPrice?: number;
     codPrice?: number;
     codCollectionFee?: number;
+    /**
+     * ISO currency of `ccPrice` / `codPrice` from Partner `price.currency`.
+     * Absent when Partner did not name a currency. Never inferred.
+     */
+    currencyCode?: string;
     labels?: Record<string, string>;
 }
 

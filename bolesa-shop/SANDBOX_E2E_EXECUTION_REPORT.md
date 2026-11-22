@@ -100,5 +100,13 @@ Non-mutating probes executed (no credentials on remote mutating paths):
 ## F. Final status
 
 - **OFFICIAL REMOTE SANDBOX E2E BLOCKED** — remote staging Partner API host is reachable, but Account 5 provides **no** remote Sandbox token, and local identity is `test_mode=false`.
-- **Local Full E2E:** **PASS**
+- **Local Full E2E:** **PASS** (2026-11-20 run; not re-executed for the 2026-11-22 currency review)
 - **Production readiness:** **NOT APPROVED**
+
+## G. 2026-11-22 currency and lifecycle review
+
+Not a sandbox run. No remote AWB was created or cancelled. `vendure-dev` was not written by this review.
+
+Code now refuses to charge a Partner shipping amount unless `price.currency` equals the Vendure channel currency. Egypt Partner config is EGP. Saudi Partner config is SAR. The `$` checkout symbol is the channel currency, not a Partner currency. Details and the AWB trigger decision are in `BOLESA_VENDURE_SHIPPING_ARCHITECTURE_REVIEW.md`.
+
+The path `/home/maher/projects/0-Project-Storage-Station/bolesa-egy` from the 2026-11-20 note is not on this machine. The Partner tree used here is `/home/maher/Projects/bolesa-egy`.

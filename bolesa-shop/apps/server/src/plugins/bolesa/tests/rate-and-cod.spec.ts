@@ -17,6 +17,7 @@ describe('BolesaRateService quote building', () => {
         ccPrice: 40,
         codPrice: 45,
         codCollectionFee: 5,
+        currencyCode: 'EGP',
     };
 
     it('builds prepaid quote from cc_price in minor units', () => {

@@ -18,6 +18,8 @@ export interface ShippingCalculationLog {
     reason:
         | 'quoted'
         | 'missing_price'
+        | 'currency_unknown'
+        | 'currency_mismatch'
         | 'no_services'
         | 'slug_not_found'
         | 'missing_resolution_hash'
@@ -98,7 +100,8 @@ export const bolesaShippingCalculator = new ShippingCalculator({
                           ? 'no_services'
                           : choices.length
                             ? 'slug_not_found'
-                            : 'missing_price',
+                            : currencyBlockReason(lookup.services, ctx.channel.defaultCurrencyCode) ??
+                              'missing_price',
                     priceMinor: null,
                     quotePersisted: false,
                 });
@@ -120,7 +123,8 @@ export const bolesaShippingCalculator = new ShippingCalculator({
                     ccPrice: prices.ccPrice,
                     codPrice: prices.codPrice,
                     outcome: 'undefined',
-                    reason: 'missing_price',
+                    reason:
+                        currencyBlockReason([option], ctx.channel.defaultCurrencyCode) ?? 'missing_price',
                     priceMinor: null,
                     quotePersisted: false,
                 });
@@ -178,6 +182,33 @@ export const bolesaShippingCalculator = new ShippingCalculator({
         }
     },
 });
+
+/**
+ * A priced Partner row that cannot be charged in the channel currency.
+ * Missing prices stay `missing_price` so a null quote is not reported as a currency error.
+ */
+function currencyBlockReason(
+    services: Array<{ ccPrice?: number; codPrice?: number; currencyCode?: string }>,
+    channelCurrency: string,
+): 'currency_unknown' | 'currency_mismatch' | undefined {
+    const priced = services.filter(
+        service =>
+            (service.ccPrice != null && !Number.isNaN(service.ccPrice)) ||
+            (service.codPrice != null && !Number.isNaN(service.codPrice)),
+    );
+    if (!priced.length) {
+        return undefined;
+    }
+    const partner = priced[0].currencyCode?.trim().toUpperCase();
+    const channel = channelCurrency.trim().toUpperCase();
+    if (!partner) {
+        return 'currency_unknown';
+    }
+    if (partner !== channel) {
+        return 'currency_mismatch';
+    }
+    return undefined;
+}
 
 function logCalculation(entry: ShippingCalculationLog): void {
     const line = `bolesa.shipping.calculate ${JSON.stringify(entry)}`;

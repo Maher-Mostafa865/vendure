@@ -47,6 +47,7 @@ describe('BolesaClient', () => {
         assert.equal(priced.option.carrierName, 'J&T Express');
         assert.equal(priced.option.logoUrl, 'https://cdn.example/jt.png');
         assert.equal((priced.option as any).fee_breakdown, undefined);
+        assert.equal(priced.option.currencyCode, undefined);
     });
 
     it('observeServiceOptions reports HTTP 200 and raw null prices', async () => {
@@ -90,6 +91,7 @@ describe('BolesaClient', () => {
                         cc_price: 45.5,
                         cod_price: 50,
                         cod_collection_fee: 5,
+                        price: { currency: 'SAR', value: 45.5 },
                     },
                 ],
             },
@@ -100,6 +102,7 @@ describe('BolesaClient', () => {
         assert.equal(services[0].slug, 'aramex-dom');
         assert.equal(services[0].ccPrice, 45.5);
         assert.equal(services[0].codCollectionFee, 5);
+        assert.equal(services[0].currencyCode, 'SAR');
     });
 
     it('maps AWB list when Partner returns a bare data array', async () => {

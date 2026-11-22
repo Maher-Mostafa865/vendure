@@ -146,6 +146,14 @@ function BolesaConnectionPage() {
                 <dd>{data.lastVerifiedAt ?? '—'}</dd>
             </dl>
             <p className="text-sm text-muted-foreground">{data.labelNote}</p>
+            <p className="text-sm text-muted-foreground">
+                Bolesa prices are charged only when Partner <code>price.currency</code> matches this
+                channel currency. Egypt deployments use EGP. Saudi deployments use SAR. There is no
+                exchange rate. A mismatch hides bolesa-shipping and leaves the other shipping methods
+                in place. An AWB is created after a Bolesa fulfillment is saved, not when the order is
+                placed. Prepaid is sent as <code>cc</code> with no COD collection. COD sends{' '}
+                <code>cod_amount</code> as the order total. Allow-open stays off.
+            </p>
             <Button type="button" onClick={() => test.mutate()} disabled={test.isPending}>
                 Test connection
             </Button>

@@ -295,9 +295,25 @@ export function mapServiceOption(raw: any): {
             ccPrice: finitePrice(raw?.cc_price),
             codPrice: finitePrice(raw?.cod_price),
             codCollectionFee: finitePrice(raw?.cod_collection_fee),
+            currencyCode: partnerPriceCurrency(raw),
             labels: raw?.labels,
         },
     };
+}
+
+/** Partner names the currency on `price.currency`. Amounts are 2-decimal major units. */
+export function partnerPriceCurrency(raw: any): string | undefined {
+    const candidates = [
+        raw?.price?.currency,
+        raw?.prices_by_address?.[0]?.price?.currency,
+        raw?.currency,
+    ];
+    for (const value of candidates) {
+        if (typeof value === 'string' && /^[A-Za-z]{3}$/.test(value.trim())) {
+            return value.trim().toUpperCase();
+        }
+    }
+    return undefined;
 }
 
 function mapAwb(row: any): BolesaAwb {

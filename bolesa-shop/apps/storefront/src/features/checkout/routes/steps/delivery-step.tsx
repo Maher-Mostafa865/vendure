@@ -133,10 +133,12 @@ export default function DeliveryStep({ onComplete }: DeliveryStepProps) {
                   <p className="font-semibold">
                     {option.price === 0
                       ? t('free')
-                      : (option.price / 100).toLocaleString(intlLocale, {
-                          style: 'currency',
-                          currency: order.currencyCode || 'USD',
-                        })}
+                      : order.currencyCode
+                        ? (option.price / 100).toLocaleString(intlLocale, {
+                            style: 'currency',
+                            currency: order.currencyCode,
+                          })
+                        : (option.price / 100).toFixed(2)}
                   </p>
                 </div>
               </div>

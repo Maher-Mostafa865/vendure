@@ -44,7 +44,7 @@ export class BolesaRateService {
         this.cache = cache;
     }
 
-    static orderFingerprint(order: Order, preference: PaymentPreference): string {
+    static orderFingerprint(order: Order, preference: PaymentPreference, channelCurrency = ''): string {
         const addr = order.shippingAddress ?? {};
         const hash = (addr as any).customFields?.bolesaCityHash ?? '';
         const weight = order.lines.reduce((sum, l) => {
@@ -58,6 +58,7 @@ export class BolesaRateService {
             weight.toFixed(3),
             order.subTotalWithTax,
             order.totalQuantity,
+            channelCurrency.trim().toUpperCase(),
         ].join('|');
     }
 
@@ -88,7 +89,11 @@ export class BolesaRateService {
             };
         }
 
-        const fingerprint = BolesaRateService.orderFingerprint(order, preference);
+        const fingerprint = BolesaRateService.orderFingerprint(
+            order,
+            preference,
+            ctx.channel.defaultCurrencyCode,
+        );
         const cacheKey = `bolesa:rates:${ctx.channelId}:${fingerprint}`;
         if (this.cache) {
             const cached = await this.cache.get<JsonCompatible<BolesaServiceOption[]>>(cacheKey);
@@ -217,6 +222,13 @@ export class BolesaRateService {
         if (baseMajor == null || Number.isNaN(baseMajor)) {
             return undefined;
         }
+        const partnerCurrency = option.currencyCode?.trim().toUpperCase();
+        const channelCurrency = currencyCode.trim().toUpperCase();
+        // Partner amounts are major units of price.currency. Reusing the number
+        // under a different channel currency (for example SAR shown as USD) is not a conversion.
+        if (!partnerCurrency || partnerCurrency !== channelCurrency) {
+            return undefined;
+        }
         let major = Number(baseMajor);
         if (preference === 'cod' && codFeeMode === 'passToCustomer' && option.codCollectionFee) {
             major += Number(option.codCollectionFee);
@@ -229,7 +241,7 @@ export class BolesaRateService {
             serviceSlug: option.slug,
             carrierName: option.carrierName,
             priceMinor,
-            currencyCode,
+            currencyCode: partnerCurrency,
             codFeeMinor: option.codCollectionFee != null ? majorToMinor(option.codCollectionFee) : undefined,
             paymentPreference: preference,
             capturedAt: new Date().toISOString(),
