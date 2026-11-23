@@ -13,9 +13,10 @@ interface ProductGridProps {
     }>;
     currentPage: number;
     take: number;
+    showVariantNames?: boolean;
 }
 
-export async function ProductGrid({productDataPromise, currentPage, take}: ProductGridProps) {
+export async function ProductGrid({productDataPromise, currentPage, take, showVariantNames}: ProductGridProps) {
     const locale = await getRouteLocale();
     const t = await getTranslations({locale, namespace: 'Product'});
     const result = await productDataPromise;
@@ -42,7 +43,7 @@ export async function ProductGrid({productDataPromise, currentPage, take}: Produ
 
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
                 {searchResult.items.map((product, i) => (
-                    <ProductCard key={'product-grid-item' + i} product={product}/>
+                    <ProductCard key={'product-grid-item' + i} product={product} showVariantName={showVariantNames}/>
                 ))}
             </div>
 

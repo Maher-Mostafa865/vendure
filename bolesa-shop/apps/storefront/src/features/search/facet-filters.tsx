@@ -18,18 +18,29 @@ interface FacetFiltersProps {
         data: ResultOf<typeof SearchProductsQuery>;
         token?: string;
     }>;
+    optionGroups?: Array<{
+        id: string;
+        name: string;
+        values: Array<{ id: string; name: string; count: number }>;
+    }>;
 }
 
 function FilterContent({
     facetGroups,
+    optionGroups,
     selectedFacets,
+    selectedOptions,
     toggleFacet,
+    toggleOption,
     clearFilters,
     hasActiveFilters,
 }: {
     facetGroups: Record<string, { id: string; name: string; values: Array<{ id: string; name: string; count: number }> }>;
+    optionGroups: Array<{ id: string; name: string; values: Array<{ id: string; name: string; count: number }> }>;
     selectedFacets: string[];
+    selectedOptions: string[];
     toggleFacet: (facetId: string) => void;
+    toggleOption: (optionId: string) => void;
     clearFilters: () => void;
     hasActiveFilters: boolean;
 }) {
@@ -46,45 +57,80 @@ function FilterContent({
             </div>
 
             {Object.entries(facetGroups).map(([facetName, facet]) => (
-                <Collapsible key={facet.id} defaultOpen>
-                    <div className="space-y-2">
-                        <CollapsibleTrigger className="flex w-full items-center justify-between py-2 text-sm font-medium hover:text-foreground transition-colors">
-                            {facetName}
-                            <ChevronDown className="h-4 w-4 text-muted-foreground transition-transform [[data-panel-open]_&]:rotate-180" />
-                        </CollapsibleTrigger>
-                        <CollapsibleContent>
-                            <div className="space-y-2 pb-2">
-                                {facet.values.map((value) => {
-                                    const isChecked = selectedFacets.includes(value.id);
-                                    return (
-                                        <div key={value.id} className="flex items-center space-x-2">
-                                            <Checkbox
-                                                id={`filter-${value.id}`}
-                                                checked={isChecked}
-                                                onCheckedChange={() => toggleFacet(value.id)}
-                                            />
-                                            <Label
-                                                htmlFor={`filter-${value.id}`}
-                                                className="text-sm font-normal cursor-pointer flex items-center gap-2"
-                                            >
-                                                {value.name}
-                                                <span className="text-xs text-muted-foreground">
-                                                    ({value.count})
-                                                </span>
-                                            </Label>
-                                        </div>
-                                    );
-                                })}
-                            </div>
-                        </CollapsibleContent>
-                    </div>
-                </Collapsible>
+                <FilterGroup
+                    key={facet.id}
+                    idPrefix="facet"
+                    name={facetName}
+                    values={facet.values}
+                    selectedIds={selectedFacets}
+                    onToggle={toggleFacet}
+                />
+            ))}
+            {optionGroups.map(group => (
+                <FilterGroup
+                    key={group.id}
+                    idPrefix="option"
+                    name={group.name}
+                    values={group.values}
+                    selectedIds={selectedOptions}
+                    onToggle={toggleOption}
+                />
             ))}
         </div>
     );
 }
 
-export function FacetFilters({ productDataPromise }: FacetFiltersProps) {
+function FilterGroup({
+    idPrefix,
+    name,
+    values,
+    selectedIds,
+    onToggle,
+}: {
+    idPrefix: string;
+    name: string;
+    values: Array<{ id: string; name: string; count: number }>;
+    selectedIds: string[];
+    onToggle: (id: string) => void;
+}) {
+    return (
+        <Collapsible defaultOpen>
+            <div className="space-y-2">
+                <CollapsibleTrigger className="flex w-full items-center justify-between py-2 text-sm font-medium hover:text-foreground transition-colors">
+                    {name}
+                    <ChevronDown className="h-4 w-4 text-muted-foreground transition-transform [[data-panel-open]_&]:rotate-180" />
+                </CollapsibleTrigger>
+                <CollapsibleContent>
+                    <div className="space-y-2 pb-2">
+                        {values.map(value => {
+                            const isChecked = selectedIds.includes(value.id);
+                            return (
+                                <div key={value.id} className="flex items-center space-x-2">
+                                    <Checkbox
+                                        id={`${idPrefix}-${value.id}`}
+                                        checked={isChecked}
+                                        onCheckedChange={() => onToggle(value.id)}
+                                    />
+                                    <Label
+                                        htmlFor={`${idPrefix}-${value.id}`}
+                                        className="text-sm font-normal cursor-pointer flex items-center gap-2"
+                                    >
+                                        {value.name}
+                                        <span className="text-xs text-muted-foreground">
+                                            ({value.count})
+                                        </span>
+                                    </Label>
+                                </div>
+                            );
+                        })}
+                    </div>
+                </CollapsibleContent>
+            </div>
+        </Collapsible>
+    );
+}
+
+export function FacetFilters({ productDataPromise, optionGroups = [] }: FacetFiltersProps) {
     const t = useTranslations('Filters');
     const result = use(productDataPromise);
     const searchResult = result.data.search;
@@ -118,19 +164,15 @@ export function FacetFilters({ productDataPromise }: FacetFiltersProps) {
     }, {});
 
     const selectedFacets = searchParams.getAll('facets');
+    const selectedOptions = searchParams.getAll('options');
 
-    const toggleFacet = (facetId: string) => {
+    const toggleParam = (key: 'facets' | 'options', id: string) => {
         const params = new URLSearchParams(searchParams);
-        const current = params.getAll('facets');
+        const current = params.getAll(key);
 
-        if (current.includes(facetId)) {
-            params.delete('facets');
-            current.filter(id => id !== facetId).forEach(id => params.append('facets', id));
-        } else {
-            params.append('facets', facetId);
-        }
-
-        // Reset to page 1 when filters change
+        params.delete(key);
+        const next = current.includes(id) ? current.filter(value => value !== id) : [...current, id];
+        next.forEach(value => params.append(key, value));
         params.delete('page');
 
         router.push(`${pathname}?${params.toString()}`);
@@ -140,21 +182,25 @@ export function FacetFilters({ productDataPromise }: FacetFiltersProps) {
     const clearFilters = () => {
         const params = new URLSearchParams(searchParams);
         params.delete('facets');
+        params.delete('options');
         params.delete('page');
         router.push(`${pathname}?${params.toString()}`);
         setSheetOpen(false);
     };
 
-    const hasActiveFilters = selectedFacets.length > 0;
+    const hasActiveFilters = selectedFacets.length > 0 || selectedOptions.length > 0;
 
-    if (Object.keys(facetGroups).length === 0) {
+    if (Object.keys(facetGroups).length === 0 && optionGroups.length === 0) {
         return null;
     }
 
     const filterContentProps = {
         facetGroups,
+        optionGroups,
         selectedFacets,
-        toggleFacet,
+        selectedOptions,
+        toggleFacet: (facetId: string) => toggleParam('facets', facetId),
+        toggleOption: (optionId: string) => toggleParam('options', optionId),
         clearFilters,
         hasActiveFilters,
     };
@@ -171,7 +217,7 @@ export function FacetFilters({ productDataPromise }: FacetFiltersProps) {
                                 {t('filtersButton')}
                                 {hasActiveFilters && (
                                     <span className="ml-2 inline-flex h-5 w-5 items-center justify-center rounded-full bg-primary text-[10px] font-bold text-primary-foreground">
-                                        {selectedFacets.length}
+                                        {selectedFacets.length + selectedOptions.length}
                                     </span>
                                 )}
                             </Button>

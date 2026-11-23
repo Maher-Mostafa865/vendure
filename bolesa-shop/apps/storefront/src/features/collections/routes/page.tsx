@@ -2,8 +2,16 @@ import type { Metadata } from 'next';
 import { Suspense } from 'react';
 import { Link } from '@/platform/i18n/navigation';
 import { query } from '@/platform/vendure/api';
+import { readFragment } from '@/platform/vendure/graphql';
 import {SearchProductsQuery} from '@/features/search/graphql';
-import {GetCollectionProductsQuery} from '@/features/collections/graphql';
+import {GetCollectionProductsQuery, GetCollectionVariantOptionsQuery} from '@/features/collections/graphql';
+import {ProductCardFragment} from '@/features/products/graphql';
+import {
+    buildOptionFilterGroups,
+    matchingVariantIds,
+    selectedOptionIds,
+    type VariantOptionRow,
+} from '@/features/collections/option-filters';
 import {ProductGrid} from '@/features/products/product-grid';
 import {FacetFilters} from '@/features/search/facet-filters';
 import {ProductGridSkeleton} from '@/features/products/product-grid-skeleton';
@@ -37,12 +45,39 @@ async function getCollectionProducts(slug: string, searchParams: { [key: string]
     cacheTag(`collection-${slug}-${locale}-${currencyCode}`);
     cacheTag('collection');
 
+    const input = buildSearchInput({
+        searchParams,
+        collectionSlug: slug,
+    });
+    if (selectedOptionIds(searchParams).length > 0) {
+        input.groupByProduct = false;
+        input.take = 100;
+        input.skip = 0;
+    }
+
     return query(SearchProductsQuery, {
-        input: buildSearchInput({
-            searchParams,
-            collectionSlug: slug
-        })
+        input,
     }, {languageCode: locale, currencyCode});
+}
+
+async function getCollectionVariantOptions(slug: string, currencyCode: string) {
+    'use cache';
+    cacheLife('hours');
+
+    const locale = await getRouteLocale();
+    cacheTag(`collection-${slug}-${locale}-${currencyCode}`);
+
+    const result = await query(GetCollectionVariantOptionsQuery, { slug }, {languageCode: locale, currencyCode});
+    const items = result.data.collection?.productVariants.items ?? [];
+    return items.map((item): VariantOptionRow => ({
+        variantId: item.id,
+        options: item.options.map(option => ({
+            id: option.id,
+            name: option.name,
+            groupId: option.group.id,
+            groupName: option.group.name,
+        })),
+    }));
 }
 
 async function getCollectionMetadata(slug: string) {
@@ -116,7 +151,29 @@ export default async function CollectionPage({params, searchParams}: PageProps<'
     const t = await getTranslations({locale, namespace: 'Collection'});
     const page = getCurrentPage(searchParamsResolved);
 
-    const productDataPromise = getCollectionProducts(slug, searchParamsResolved, currencyCode);
+    const optionRows = await getCollectionVariantOptions(slug, currencyCode);
+    const optionGroups = buildOptionFilterGroups(optionRows);
+    const activeOptions = selectedOptionIds(searchParamsResolved);
+    const productDataPromise = getCollectionProducts(slug, searchParamsResolved, currencyCode).then(result => {
+        if (activeOptions.length === 0) {
+            return result;
+        }
+        const allowed = new Set(matchingVariantIds(optionRows, activeOptions));
+        const items = result.data.search.items.filter(item =>
+            allowed.has(readFragment(ProductCardFragment, item).productVariantId),
+        );
+        return {
+            ...result,
+            data: {
+                ...result.data,
+                search: {
+                    ...result.data.search,
+                    items,
+                    totalItems: items.length,
+                },
+            },
+        };
+    });
     const collectionResult = await getCollectionMetadata(slug);
     const collectionName = collectionResult.data.collection?.name ?? slug;
 
@@ -144,14 +201,19 @@ export default async function CollectionPage({params, searchParams}: PageProps<'
                 {/* Filters Sidebar */}
                 <aside className="lg:col-span-1">
                     <Suspense fallback={<div className="h-64 animate-pulse bg-muted rounded-lg" />}>
-                        <FacetFilters productDataPromise={productDataPromise} />
+                        <FacetFilters productDataPromise={productDataPromise} optionGroups={optionGroups} />
                     </Suspense>
                 </aside>
 
                 {/* Product Grid */}
                 <div className="lg:col-span-3">
                     <Suspense fallback={<ProductGridSkeleton />}>
-                        <ProductGrid productDataPromise={productDataPromise} currentPage={page} take={12} />
+                        <ProductGrid
+                            productDataPromise={productDataPromise}
+                            currentPage={page}
+                            take={12}
+                            showVariantNames={activeOptions.length > 0}
+                        />
                     </Suspense>
                 </div>
             </div>

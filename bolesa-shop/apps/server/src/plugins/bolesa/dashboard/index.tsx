@@ -1,6 +1,7 @@
 import { api, Button, defineDashboardExtension } from '@vendure/dashboard';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 
 /**
  * Phase 1 Dashboard hooks:
@@ -23,6 +24,7 @@ const connectionQuery = `
       codEnabled
       codFeeMode
       labelNote
+      shipperAddress
       allowOpen
       autoCreateAwb
       defaultServiceSlug
@@ -34,6 +36,18 @@ const connectionQuery = `
 const servicesQuery = `
   query BolesaAccountServices {
     bolesaAccountServices { slug name logoUrl }
+  }
+`;
+
+const saveConnectionMutation = `
+  mutation SaveBolesaConnection($input: UpdateBolesaConnectionInput!) {
+    updateBolesaConnection(input: $input) {
+      id
+      apiBaseUrl
+      tokenLast4
+      isActive
+      shipperAddress
+    }
   }
 `;
 
@@ -103,6 +117,7 @@ async function adminApi<T = any>(document: string, variables?: Record<string, un
 
 function BolesaConnectionPage() {
     const qc = useQueryClient();
+    const [celebrate, setCelebrate] = useState<string | null>(null);
     const { data, isLoading, error, refetch } = useQuery({
         queryKey: ['bolesaConnection'],
         queryFn: async () => {
@@ -115,75 +130,318 @@ function BolesaConnectionPage() {
             const d = await adminApi<{ testBolesaConnection: any }>(testMutation);
             return d.testBolesaConnection;
         },
-        onSuccess: () => qc.invalidateQueries({ queryKey: ['bolesaConnection'] }),
+        onSuccess: result => {
+            qc.invalidateQueries({ queryKey: ['bolesaConnection'] });
+            if (result?.ok) {
+                setCelebrate(result.message || 'The Partner API accepted this connection.');
+            }
+        },
     });
 
     if (isLoading) {
-        return <div>Loading Bolesa connection…</div>;
+        return <PageShell title="Bolesa Connection"><p className="text-sm text-muted-foreground">Loading connection…</p></PageShell>;
     }
     if (error) {
         return (
-            <div className="p-4 space-y-2">
-                <h2 className="text-lg font-medium">Bolesa Connection</h2>
-                <p className="text-destructive text-sm">
-                    Failed to load connection: {(error as Error).message}
-                </p>
+            <PageShell title="Bolesa Connection">
+                <p className="text-destructive text-sm">Failed to load connection: {(error as Error).message}</p>
                 <p className="text-muted-foreground text-sm">
-                    Open this page at <code>/dashboard/bolesa-connection</code> (not{' '}
-                    <code>/admin/extensions/…</code>), stay logged in, and ensure the Default
-                    channel is selected.
+                    Stay logged in and select the channel in the dashboard header, then open this page again.
                 </p>
-                <Button type="button" onClick={() => refetch()}>
-                    Retry
-                </Button>
-            </div>
+                <Button type="button" onClick={() => refetch()}>Retry</Button>
+            </PageShell>
         );
     }
     if (!data) {
         return (
-            <div className="p-4">
-                <h2 className="text-lg font-medium">Bolesa Connection</h2>
-                <p className="text-muted-foreground mt-2">
-                    No connection configured for this channel. Use the Admin API mutation
-                    updateBolesaConnection to set apiBaseUrl, token, and shipperAddress.
-                </p>
-            </div>
+            <PageShell
+                title="Bolesa Connection"
+                description="No connection for the channel selected in the dashboard. Add the Partner API URL, token, and shipper address."
+            >
+                <ConnectionForm existing={null} />
+            </PageShell>
         );
     }
     return (
-        <div className="p-4 space-y-3">
-            <h2 className="text-lg font-medium">Bolesa Connection</h2>
-            <dl className="grid grid-cols-2 gap-2 text-sm">
-                <dt>API</dt>
-                <dd>{data.apiBaseUrl}</dd>
-                <dt>Token</dt>
-                <dd>****{data.tokenLast4}</dd>
-                <dt>Active</dt>
-                <dd>{data.isActive ? 'yes' : 'no'}</dd>
-                <dt>COD</dt>
-                <dd>
-                    {data.codEnabled ? `enabled (${data.codFeeMode})` : 'disabled'}
-                </dd>
-                <dt>Last verified</dt>
-                <dd>{data.lastVerifiedAt ?? '—'}</dd>
-            </dl>
-            <p className="text-sm text-muted-foreground">{data.labelNote}</p>
-            <MerchantSettings connection={data} />
-            <p className="text-sm text-muted-foreground">
-                Bolesa prices are charged only when Partner <code>price.currency</code> matches this
-                channel currency. Egypt deployments use EGP. Saudi deployments use SAR. There is no
-                exchange rate. A mismatch hides bolesa-shipping and leaves the other shipping methods
-                in place. Prepaid is sent as <code>cc</code> with no COD collection. COD sends{' '}
-                <code>cod_amount</code> as the order total. Automatic creation adds the fulfillment
-                after payment is ready; the AWB is still sent by the background job.
-            </p>
-            <Button type="button" onClick={() => test.mutate()} disabled={test.isPending}>
-                Test connection
-            </Button>
-            {test.data && (
-                <p className="text-sm">{test.data.ok ? 'OK' : 'Failed'}: {test.data.message}</p>
+        <PageShell
+            title="Bolesa Connection"
+            description="Partner credentials and the shipper address used for this channel."
+            actions={
+                <Button type="button" variant="secondary" onClick={() => test.mutate()} disabled={test.isPending}>
+                    {test.isPending ? 'Testing…' : 'Test connection'}
+                </Button>
+            }
+        >
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                <StatusCard label="Status" value={data.isActive ? 'Active' : 'Inactive'} tone={data.isActive ? 'ok' : 'muted'} />
+                <StatusCard label="Token" value={`···· ${data.tokenLast4 || '—'}`} />
+                <StatusCard
+                    label="Cash on delivery"
+                    value={data.codEnabled ? `On · ${data.codFeeMode}` : 'Off'}
+                />
+                <StatusCard label="Last verified" value={formatWhen(data.lastVerifiedAt)} />
+            </div>
+            {test.data && !test.data.ok && (
+                <p className="text-sm text-destructive">Connection failed. {test.data.message}</p>
             )}
+            {test.data?.ok && !celebrate && (
+                <p className="text-sm">Connection accepted. {test.data.message}</p>
+            )}
+            {celebrate && <Celebration message={celebrate} onClose={() => setCelebrate(null)} />}
+            {data.labelNote && <p className="text-sm text-muted-foreground">{data.labelNote}</p>}
+            <div className="grid gap-4 xl:grid-cols-2">
+                <ConnectionForm existing={data} />
+                <MerchantSettings connection={data} />
+            </div>
+            <p className="text-xs text-muted-foreground">
+                Shipping prices are used only when the Partner currency matches this channel. Egypt uses EGP and
+                Saudi Arabia uses SAR. Prepaid is sent as cc. Cash on delivery sends the order total.
+            </p>
+        </PageShell>
+    );
+}
+
+function PageShell({
+    title,
+    description,
+    actions,
+    children,
+}: {
+    title: string;
+    description?: string;
+    actions?: ReactNode;
+    children: ReactNode;
+}) {
+    return (
+        <div className="mx-auto max-w-6xl space-y-4 p-4">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="space-y-1">
+                    <h2 className="text-xl font-semibold tracking-tight">{title}</h2>
+                    {description && <p className="max-w-2xl text-sm text-muted-foreground">{description}</p>}
+                </div>
+                {actions}
+            </div>
+            {children}
         </div>
+    );
+}
+
+function StatusCard({ label, value, tone }: { label: string; value: string; tone?: 'ok' | 'muted' }) {
+    return (
+        <div className="rounded-lg border bg-card px-4 py-3">
+            <div className="text-xs text-muted-foreground">{label}</div>
+            <div className={`mt-1 text-sm font-medium ${tone === 'ok' ? 'text-foreground' : ''}`}>{value}</div>
+        </div>
+    );
+}
+
+function Celebration({ message, onClose }: { message: string; onClose: () => void }) {
+    const closeRef = useRef(onClose);
+    closeRef.current = onClose;
+    useEffect(() => {
+        const timer = window.setTimeout(() => closeRef.current(), 7000);
+        return () => window.clearTimeout(timer);
+    }, []);
+    const pieces = ['🎉', '🎊', '✨', '🥳', '⭐'];
+    return createPortal(
+        <div
+            className="fixed inset-0 flex items-center justify-center"
+            style={{ zIndex: 2147483000 }}
+            role="dialog"
+            aria-label="Connection accepted"
+            onClick={onClose}
+        >
+            <style>{celebrationCss}</style>
+            <div className="absolute inset-0 bg-black/55" />
+            {Array.from({ length: 36 }, (_, index) => (
+                <span
+                    key={index}
+                    className="bolesa-confetti pointer-events-none absolute top-0 text-2xl"
+                    style={{
+                        left: `${(index * 29) % 100}%`,
+                        animationDelay: `${(index % 9) * 0.16}s`,
+                        animationDuration: `${2.4 + (index % 5) * 0.35}s`,
+                    }}
+                >
+                    {pieces[index % pieces.length]}
+                </span>
+            ))}
+            <div
+                className="bolesa-celebrate relative mx-4 max-w-md rounded-2xl border bg-card px-8 py-7 text-center shadow-2xl"
+                onClick={event => event.stopPropagation()}
+            >
+                <div className="text-6xl">🎉</div>
+                <h3 className="mt-3 text-2xl font-semibold">Congratulations</h3>
+                <p className="mt-2 text-sm text-muted-foreground">Connection accepted. {message}</p>
+                <Button type="button" className="mt-5" onClick={onClose}>
+                    Continue
+                </Button>
+            </div>
+        </div>,
+        document.body,
+    );
+}
+
+const celebrationCss = `
+@keyframes bolesa-fall {
+  0% { transform: translateY(-12vh) rotate(0deg); opacity: 0; }
+  12% { opacity: 1; }
+  100% { transform: translateY(110vh) rotate(280deg); opacity: 0.9; }
+}
+@keyframes bolesa-pop {
+  0% { transform: scale(0.6); opacity: 0; }
+  70% { transform: scale(1.06); }
+  100% { transform: scale(1); opacity: 1; }
+}
+.bolesa-confetti { animation-name: bolesa-fall; animation-timing-function: linear; animation-iteration-count: infinite; }
+.bolesa-celebrate { animation: bolesa-pop 0.45s ease-out; }
+@media (prefers-reduced-motion: reduce) {
+  .bolesa-confetti { animation: none; top: 12%; }
+  .bolesa-celebrate { animation: none; }
+}
+`;
+
+function formatWhen(value: string | null | undefined): string {
+    if (!value) {
+        return 'Not verified';
+    }
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) {
+        return value;
+    }
+    return date.toLocaleString();
+}
+
+const fieldClass = 'h-9 w-full rounded-md border bg-background px-3 text-sm';
+
+type ShipperAddress = {
+    name?: string;
+    phone?: string;
+    country_code?: string;
+    resolution_hash?: string;
+    address_line?: string;
+};
+
+function ConnectionForm({ existing }: { existing: any | null }) {
+    const qc = useQueryClient();
+    const shipper = (existing?.shipperAddress ?? {}) as ShipperAddress;
+    const [apiBaseUrl, setApiBaseUrl] = useState(existing?.apiBaseUrl ?? '');
+    const [token, setToken] = useState('');
+    const [name, setName] = useState(shipper.name ?? '');
+    const [phone, setPhone] = useState(shipper.phone ?? '');
+    const [countryCode, setCountryCode] = useState(shipper.country_code ?? 'EG');
+    const [resolutionHash, setResolutionHash] = useState(shipper.resolution_hash ?? '');
+    const [addressLine, setAddressLine] = useState(shipper.address_line ?? '');
+    const [formError, setFormError] = useState('');
+
+    useEffect(() => {
+        const next = (existing?.shipperAddress ?? {}) as ShipperAddress;
+        setApiBaseUrl(existing?.apiBaseUrl ?? '');
+        setName(next.name ?? '');
+        setPhone(next.phone ?? '');
+        setCountryCode(next.country_code ?? 'EG');
+        setResolutionHash(next.resolution_hash ?? '');
+        setAddressLine(next.address_line ?? '');
+    }, [existing]);
+
+    const save = useMutation({
+        mutationFn: async () => {
+            const input: Record<string, unknown> = {
+                apiBaseUrl: apiBaseUrl.trim(),
+                isActive: true,
+                shipperAddress: {
+                    name: name.trim(),
+                    phone: phone.trim(),
+                    country_code: countryCode.trim(),
+                    resolution_hash: resolutionHash.trim(),
+                    address_line: addressLine.trim(),
+                },
+            };
+            if (token.trim()) {
+                input.token = token.trim();
+            }
+            const result = await adminApi<{ updateBolesaConnection: any }>(saveConnectionMutation, { input });
+            return result.updateBolesaConnection;
+        },
+        onSuccess: () => {
+            setToken('');
+            setFormError('');
+            qc.invalidateQueries({ queryKey: ['bolesaConnection'] });
+        },
+    });
+
+    const missingToken = !existing && !token.trim();
+
+    return (
+        <form
+            className="space-y-5 rounded-lg border bg-card p-5"
+            onSubmit={event => {
+                event.preventDefault();
+                if (missingToken) {
+                    setFormError('Partner API token is required.');
+                    return;
+                }
+                setFormError('');
+                save.mutate();
+            }}
+        >
+            <div>
+                <h3 className="font-medium">{existing ? 'Connection details' : 'Add connection'}</h3>
+                <p className="mt-1 text-xs text-muted-foreground">
+                    Saved for the channel selected in the dashboard.
+                    {existing ? ' Leave the token blank to keep the current one.' : ''}
+                </p>
+            </div>
+            <div className="grid gap-4 sm:grid-cols-2">
+                <Field label="API base URL" className="sm:col-span-2">
+                    <input className={fieldClass} value={apiBaseUrl} required placeholder="https://api.example/api/pcl/v1" onChange={event => setApiBaseUrl(event.target.value)} />
+                </Field>
+                <Field label="Partner API token" className="sm:col-span-2">
+                    <input
+                        className={fieldClass}
+                        type="password"
+                        value={token}
+                        autoComplete="off"
+                        placeholder={existing ? `Current token ends with ${existing.tokenLast4}` : 'Paste the Partner token'}
+                        onChange={event => setToken(event.target.value)}
+                    />
+                </Field>
+                <Field label="Shipper name">
+                    <input className={fieldClass} value={name} required onChange={event => setName(event.target.value)} />
+                </Field>
+                <Field label="Shipper phone">
+                    <input className={fieldClass} value={phone} required onChange={event => setPhone(event.target.value)} />
+                </Field>
+                <Field label="Country code">
+                    <input className={fieldClass} value={countryCode} required onChange={event => setCountryCode(event.target.value)} />
+                </Field>
+                <Field label="City resolution hash">
+                    <input className={fieldClass} value={resolutionHash} required onChange={event => setResolutionHash(event.target.value)} />
+                </Field>
+                <Field label="Address" className="sm:col-span-2">
+                    <input className={fieldClass} value={addressLine} required onChange={event => setAddressLine(event.target.value)} />
+                </Field>
+            </div>
+            <div className="flex items-center justify-between gap-3">
+                <div className="text-sm">
+                    {formError && <p className="text-destructive">{formError}</p>}
+                    {save.error && <p className="text-destructive">{(save.error as Error).message}</p>}
+                    {save.isSuccess && <p>Connection saved.</p>}
+                </div>
+                <Button type="submit" disabled={save.isPending || missingToken}>
+                    {save.isPending ? 'Saving…' : existing ? 'Save connection' : 'Add connection'}
+                </Button>
+            </div>
+        </form>
+    );
+}
+
+function Field({ label, className, children }: { label: string; className?: string; children: ReactNode }) {
+    return (
+        <label className={`block space-y-1.5 text-sm ${className ?? ''}`}>
+            <span className="text-muted-foreground">{label}</span>
+            {children}
+        </label>
     );
 }
 
@@ -225,6 +483,13 @@ function MerchantSettings({ connection }: { connection: any }) {
     const catalog = services.data ?? [];
     const choices = enabled.length ? catalog.filter(row => enabled.includes(row.slug)) : catalog;
     const needsDefault = autoCreateAwb && !defaultSlug;
+    const allSelected = catalog.length > 0 && catalog.every(row => enabled.includes(row.slug));
+    function selectAll() {
+        setEnabled(catalog.map(row => row.slug));
+    }
+    function clearAll() {
+        setEnabled([]);
+    }
     function toggle(slug: string) {
         setEnabled(current => {
             const next = current.includes(slug) ? current.filter(item => item !== slug) : [...current, slug];
@@ -236,82 +501,95 @@ function MerchantSettings({ connection }: { connection: any }) {
     }
     return (
         <form
-            className="space-y-3 border rounded-md p-3"
+            className="space-y-5 rounded-lg border bg-card p-5"
             onSubmit={event => {
                 event.preventDefault();
                 save.mutate();
             }}
         >
-            <h3 className="text-sm font-medium">Shipment settings</h3>
-            <label className="flex items-center gap-2 text-sm">
-                <input type="checkbox" checked={allowOpen} onChange={event => setAllowOpen(event.target.checked)} />
-                Allow the customer to open the shipment
-            </label>
-            {allowOpen && (
-                <p className="text-sm text-destructive">
-                    Bosta services (slug starts with bosta_) need at least one public product photo URL.
-                    Without it, AWB creation stops with allow_open_images_required and no shipment is booked.
-                    Other carriers that do not allow opening the parcel are rejected by Bolesa with allow_open_unavailable.
+            <div>
+                <h3 className="font-medium">Shipment settings</h3>
+                <p className="mt-1 text-xs text-muted-foreground">
+                    Leave every service unchecked to offer all priced services.
                 </p>
-            )}
-            <label className="flex items-center gap-2 text-sm">
-                <input
-                    type="checkbox"
-                    checked={autoCreateAwb}
-                    onChange={event => setAutoCreateAwb(event.target.checked)}
-                />
-                Create the Bolesa fulfillment automatically after payment
-            </label>
-            <div className="space-y-1">
-                <p className="text-sm">Services customers can choose</p>
-                {services.isLoading && <p className="text-sm text-muted-foreground">Loading services…</p>}
-                {services.error && (
-                    <p className="text-sm text-destructive">{(services.error as Error).message}</p>
+            </div>
+            <div className="space-y-2">
+                <label className="flex items-start gap-3 rounded-md border px-3 py-2 text-sm">
+                    <input className="mt-0.5" type="checkbox" checked={allowOpen} onChange={event => setAllowOpen(event.target.checked)} />
+                    <span>Allow the customer to open the shipment</span>
+                </label>
+                {allowOpen && (
+                    <p className="text-xs text-destructive">
+                        Bosta services need a public product photo. Without it, the shipment is not booked.
+                    </p>
                 )}
+                <label className="flex items-start gap-3 rounded-md border px-3 py-2 text-sm">
+                    <input className="mt-0.5" type="checkbox" checked={autoCreateAwb} onChange={event => setAutoCreateAwb(event.target.checked)} />
+                    <span>Create the Bolesa fulfillment automatically after payment</span>
+                </label>
+            </div>
+            <div className="space-y-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className="text-sm text-muted-foreground">
+                        Services customers can choose
+                        {catalog.length > 0 && (
+                            <span className="ml-2 text-xs">
+                                {enabled.length ? `${enabled.length} of ${catalog.length}` : 'All priced services'}
+                            </span>
+                        )}
+                    </p>
+                    {catalog.length > 0 && (
+                        <div className="flex gap-2">
+                            <Button type="button" variant="secondary" onClick={selectAll} disabled={allSelected}>
+                                Select all
+                            </Button>
+                            <Button type="button" variant="secondary" onClick={clearAll} disabled={enabled.length === 0}>
+                                Clear
+                            </Button>
+                        </div>
+                    )}
+                </div>
+                {services.isLoading && <p className="text-sm text-muted-foreground">Loading services…</p>}
+                {services.error && <p className="text-sm text-destructive">{(services.error as Error).message}</p>}
                 {!services.isLoading && !catalog.length && (
                     <p className="text-sm text-muted-foreground">No services returned for this account.</p>
                 )}
-                <div className="space-y-1">
-                    {catalog.map(row => (
-                        <label key={row.slug} className="flex items-center gap-2 text-sm">
-                            <input
-                                type="checkbox"
-                                checked={enabled.includes(row.slug)}
-                                onChange={() => toggle(row.slug)}
-                            />
-                            {row.name} <span className="text-muted-foreground">{row.slug}</span>
-                        </label>
-                    ))}
-                </div>
-                <p className="text-xs text-muted-foreground">
-                    Leave every box unchecked to offer all priced services. Checking any box limits checkout to those services.
-                </p>
+                {catalog.length > 0 && (
+                    <div className="max-h-64 space-y-1 overflow-y-auto rounded-md border p-2">
+                        {catalog.map(row => (
+                            <label key={row.slug} className="flex items-center gap-3 rounded-md px-2 py-1.5 text-sm hover:bg-muted">
+                                <input type="checkbox" checked={enabled.includes(row.slug)} onChange={() => toggle(row.slug)} />
+                                <span className="min-w-0">
+                                    <span className="block">{row.name}</span>
+                                    <span className="block truncate text-xs text-muted-foreground">{row.slug}</span>
+                                </span>
+                            </label>
+                        ))}
+                    </div>
+                )}
             </div>
-            <label className="block text-sm space-y-1">
-                <span>Default service</span>
-                <select
-                    className="border rounded px-2 py-1 w-full bg-background"
-                    value={defaultSlug}
-                    onChange={event => setDefaultSlug(event.target.value)}
-                >
+            <Field label="Default service">
+                <select className={fieldClass} value={defaultSlug} onChange={event => setDefaultSlug(event.target.value)}>
                     <option value="">None</option>
                     {choices.map(row => (
-                        <option key={row.slug} value={row.slug}>
-                            {row.name}
-                        </option>
+                        <option key={row.slug} value={row.slug}>{row.name}</option>
                     ))}
                 </select>
-            </label>
+            </Field>
             {needsDefault && (
                 <p className="text-sm text-destructive">
-                    Automatic creation needs a default service. It is used when the customer does not pick one, and it is not replaced if it cannot be quoted.
+                    Automatic creation needs a default service for customers who do not pick one.
                 </p>
             )}
-            <Button type="submit" disabled={save.isPending || needsDefault}>
-                Save settings
-            </Button>
-            {save.error && <p className="text-sm text-destructive">{(save.error as Error).message}</p>}
-            {save.isSuccess && <p className="text-sm">Saved.</p>}
+            <div className="flex items-center justify-between gap-3">
+                <div className="text-sm">
+                    {save.error && <p className="text-destructive">{(save.error as Error).message}</p>}
+                    {save.isSuccess && <p>Settings saved.</p>}
+                </div>
+                <Button type="submit" disabled={save.isPending || needsDefault}>
+                    {save.isPending ? 'Saving…' : 'Save settings'}
+                </Button>
+            </div>
         </form>
     );
 }

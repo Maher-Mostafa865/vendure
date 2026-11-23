@@ -13,6 +13,26 @@ export const GetTopCollectionsQuery = graphql(`
     }
 `);
 
+export const GetCollectionVariantOptionsQuery = graphql(`
+    query GetCollectionVariantOptions($slug: String!) {
+        collection(slug: $slug) {
+            productVariants(options: { take: 100 }) {
+                items {
+                    id
+                    options {
+                        id
+                        name
+                        group {
+                            id
+                            name
+                        }
+                    }
+                }
+            }
+        }
+    }
+`);
+
 export const GetCollectionProductsQuery = graphql(`
     query GetCollectionProducts($slug: String!, $input: SearchInput!) {
         collection(slug: $slug) {

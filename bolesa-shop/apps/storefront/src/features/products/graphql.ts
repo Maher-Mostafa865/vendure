@@ -4,6 +4,8 @@ export const ProductCardFragment = graphql(`
     fragment ProductCard on SearchResult {
         productId
         productName
+        productVariantId
+        productVariantName
         slug
         productAsset {
             id

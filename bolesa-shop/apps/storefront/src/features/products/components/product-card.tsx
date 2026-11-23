@@ -9,11 +9,13 @@ import {useTranslations} from 'next-intl';
 interface ProductCardProps {
     product: FragmentOf<typeof ProductCardFragment>;
     preload?: boolean;
+    showVariantName?: boolean;
 }
 
-export function ProductCard({product: productProp, preload}: ProductCardProps) {
+export function ProductCard({product: productProp, preload, showVariantName}: ProductCardProps) {
     const t = useTranslations('Product');
     const product = readFragment(ProductCardFragment, productProp);
+    const title = showVariantName ? product.productVariantName : product.productName;
 
     return (
         <Link
@@ -24,7 +26,7 @@ export function ProductCard({product: productProp, preload}: ProductCardProps) {
                 {product.productAsset ? (
                     <Image
                         src={product.productAsset.preview}
-                        alt={product.productName}
+                        alt={title}
                         fill
                         preload={preload}
                         className="object-cover group-hover:scale-105 group-hover:opacity-90 transition-all duration-500"
@@ -38,7 +40,7 @@ export function ProductCard({product: productProp, preload}: ProductCardProps) {
             </div>
             <div className="p-4 space-y-2">
                 <h3 className="font-medium leading-snug line-clamp-2 group-hover:text-primary transition-colors">
-                    {product.productName}
+                    {title}
                 </h3>
                 <Suspense fallback={<div className="h-8 w-36 rounded bg-muted"></div>}>
                     <p className="text-lg font-bold tracking-tight">
