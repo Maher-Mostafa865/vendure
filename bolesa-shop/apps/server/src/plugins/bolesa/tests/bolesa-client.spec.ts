@@ -83,6 +83,36 @@ describe('BolesaClient', () => {
         assert.equal(lines.some(line => line.includes('test-token')), false);
     });
 
+    it('records the services/options request and response for NestLens without the token', async () => {
+        originalFetch = globalThis.fetch;
+        const responseBody = {
+            success: true,
+            data: { services: [{ slug: 'bosta', cc_price: 12.5, cod_price: null }] },
+        };
+        globalThis.fetch = mockFetch(200, responseBody);
+        const entries: Array<{ type: string; payload: Record<string, unknown> }> = [];
+        const collector = {
+            collect(type: string, payload: Record<string, unknown>) {
+                entries.push({ type, payload });
+            },
+        };
+        const client = new BolesaClient(
+            { apiBaseUrl: auth.apiBaseUrl, encryptionSecret: 'x' },
+            collector as never,
+        );
+        await client.observeServiceOptions(auth, { payment_type: 'cc', weight: 1 });
+        await client.me(auth);
+
+        assert.equal(entries.length, 1);
+        assert.equal(entries[0].type, 'http-client');
+        assert.equal(entries[0].payload.method, 'POST');
+        assert.equal(entries[0].payload.url, 'https://api.test/api/pcl/v1/services/options');
+        assert.deepEqual(entries[0].payload.requestBody, { payment_type: 'cc', weight: 1 });
+        assert.equal(entries[0].payload.statusCode, 200);
+        assert.deepEqual(entries[0].payload.responseBody, responseBody);
+        assert.equal(JSON.stringify(entries[0].payload).includes('test-token'), false);
+    });
+
     it('service options HTTP 500 throws and does not yield a zero price', async () => {
         originalFetch = globalThis.fetch;
         globalThis.fetch = mockFetch(500, { success: false, message: 'Bolesa API error 500' });

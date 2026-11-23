@@ -1,5 +1,6 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Optional } from '@nestjs/common';
 import { Logger } from '@vendure/core';
+import { CollectorService } from 'nestlens';
 
 import { BOLESA_PLUGIN_OPTIONS, loggerCtx } from '../constants';
 import {
@@ -68,7 +69,10 @@ export interface ServiceOptionsObservation {
 
 @Injectable()
 export class BolesaClient {
-    constructor(@Inject(BOLESA_PLUGIN_OPTIONS) private options: BolesaPluginOptions) {}
+    constructor(
+        @Inject(BOLESA_PLUGIN_OPTIONS) private options: BolesaPluginOptions,
+        @Optional() @Inject(CollectorService) private nestLens?: CollectorService,
+    ) {}
 
     async me(auth: BolesaRequestAuth): Promise<unknown> {
         return this.request(auth, 'GET', '/me');
@@ -266,6 +270,7 @@ export class BolesaClient {
             headers['Content-Type'] = 'application/json';
         }
 
+        const startedAt = Date.now();
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), timeoutMs);
         let response: Response;
@@ -279,6 +284,9 @@ export class BolesaClient {
         } catch (e: any) {
             clearTimeout(timeout);
             Logger.error(`Bolesa request failed: ${method} ${path}: ${e?.message}`, loggerCtx);
+            this.recordServiceOptions(method, url, path, body, startedAt, {
+                error: e?.message ?? 'Network error',
+            });
             throw new BolesaApiError('network_error', e?.message ?? 'Network error', 503);
         }
         clearTimeout(timeout);
@@ -296,10 +304,59 @@ export class BolesaClient {
             const code = err?.code ?? `http_${response.status}`;
             const message = err?.message ?? `Bolesa API error ${response.status}`;
             Logger.warn(`Bolesa ${method} ${path} -> ${response.status} ${code}`, loggerCtx);
+            this.recordServiceOptions(method, url, path, body, startedAt, {
+                statusCode: response.status,
+                responseBody: data,
+                error: message,
+            });
             throw new BolesaApiError(code, message, response.status, data);
         }
 
+        this.recordServiceOptions(method, url, path, body, startedAt, {
+            statusCode: response.status,
+            responseBody: data,
+        });
         return { status: response.status, data, headers: response.headers };
+    }
+
+    /**
+     * NestLens watches Axios, and this client uses fetch, so the partner call
+     * never appeared under HTTP Client. Record `/services/options` directly.
+     * The API token stays out of the entry.
+     */
+    private recordServiceOptions(
+        method: string,
+        url: string,
+        path: string,
+        requestBody: unknown,
+        startedAt: number,
+        outcome: { statusCode?: number; responseBody?: unknown; error?: string },
+    ): void {
+        if (!this.nestLens || path.split('?')[0] !== '/services/options') {
+            return;
+        }
+        let hostname: string | undefined;
+        try {
+            hostname = new URL(url).hostname;
+        } catch {
+            hostname = undefined;
+        }
+        try {
+            const pending = this.nestLens.collect('http-client', {
+                method,
+                url,
+                hostname,
+                path,
+                requestBody,
+                statusCode: outcome.statusCode,
+                responseBody: outcome.responseBody,
+                duration: Date.now() - startedAt,
+                error: outcome.error,
+            });
+            void Promise.resolve(pending).catch(() => undefined);
+        } catch {
+            // A failed recording must not change the partner response.
+        }
     }
 }
 
