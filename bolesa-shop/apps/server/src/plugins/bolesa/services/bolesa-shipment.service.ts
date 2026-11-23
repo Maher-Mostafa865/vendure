@@ -45,6 +45,7 @@ import { decideCreateAwbGate, isValidPersistedOrderId } from '../util/create-awb
 import { minorToMajor } from '../util/money';
 import { awbPaymentType, PaymentFact } from '../util/payment-kind';
 import { buildAwbShipmentContent } from '../util/awb-content';
+import { carrierOrderNumber } from '../util/carrier-order-number';
 import { merchantServiceSlugs, openShipmentImageError, resolveAwbServiceSlug } from '../util/merchant-services';
 import { chargedShippingQuote, normalizeServiceOffers, quoteCustomerShipping } from '../util/service-offer';
 import { partnerAddressLine } from '../util/partner-address-line';
@@ -69,7 +70,7 @@ import {
     mapBolesaStatusToFulfillmentTarget,
     shouldIgnoreAsStale,
 } from '../util/status-map';
-import { BolesaApiError, BolesaClient } from './bolesa-client.service';
+import { BolesaApiError, BolesaClient, PartnerExchange } from './bolesa-client.service';
 import { BolesaConnectionService } from './bolesa-connection.service';
 import { BolesaRateService } from './bolesa-rate.service';
 
@@ -1101,6 +1102,7 @@ export class BolesaShipmentService implements OnModuleInit {
                 if (result.status === 'queued') {
                     shipment.syncStatus = 'awaiting_bolesa';
                     shipment.lastError = null;
+                    this.rememberExchange(shipment, result.exchange);
                     await this.connection.getRepository(txCtx, BolesaShipment).save(shipment);
                     await this.patchFulfillment(txCtx, fulfillmentId, {
                         bolesaSyncStatus: 'awaiting_bolesa',
@@ -1111,6 +1113,7 @@ export class BolesaShipmentService implements OnModuleInit {
                 if (!awb?.trackingNumber) {
                     throw new Error('Bolesa returned success without tracking_number');
                 }
+                this.rememberExchange(shipment, result.exchange);
                 await this.adoptAwb(txCtx, shipment, awb);
                 return {
                     ok: true as const,
@@ -1138,6 +1141,7 @@ export class BolesaShipmentService implements OnModuleInit {
                         }
                         shipment.lastError = e.detail();
                         shipment.lastErrorAt = new Date();
+                        this.rememberExchange(shipment, e.exchange);
                         await this.connection.getRepository(txCtx, BolesaShipment).save(shipment);
                     });
                     throw e;
@@ -1167,6 +1171,7 @@ export class BolesaShipmentService implements OnModuleInit {
                                         trackingNumber: again.trackingNumber,
                                     };
                                 }
+                                this.rememberExchange(shipment, e.exchange);
                                 await this.adoptAwb(txCtx, shipment, existing[0]);
                                 return {
                                     ok: true as const,
@@ -1194,6 +1199,7 @@ export class BolesaShipmentService implements OnModuleInit {
                         shipment.syncStatus = 'failed';
                         shipment.lastError = e.detail();
                         shipment.lastErrorAt = new Date();
+                        this.rememberExchange(shipment, e.exchange);
                         await this.connection.getRepository(txCtx, BolesaShipment).save(shipment);
                         await this.patchFulfillment(txCtx, fulfillmentId, {
                             bolesaSyncStatus: 'failed',
@@ -1639,6 +1645,14 @@ export class BolesaShipmentService implements OnModuleInit {
         return snapshot;
     }
 
+    private rememberExchange(shipment: BolesaShipment, exchange?: PartnerExchange): void {
+        if (!exchange) {
+            return;
+        }
+        shipment.partnerRequest = exchange.request;
+        shipment.partnerResponse = exchange.response;
+    }
+
     private async adoptAwb(ctx: RequestContext, shipment: BolesaShipment, awb: {
         trackingNumber: string;
         awbReference?: string;
@@ -1751,7 +1765,7 @@ export class BolesaShipmentService implements OnModuleInit {
             order.code,
         );
         const input: BolesaCreateAwbInput = {
-            orderNumber: order.code,
+            orderNumber: carrierOrderNumber(order.code, shipment.idempotencyKey),
             carrierServiceSlug: serviceSlug,
             shipmentType: 'domestic',
             shipmentOperation: 'ship',

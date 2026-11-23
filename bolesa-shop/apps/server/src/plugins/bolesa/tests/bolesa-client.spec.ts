@@ -103,14 +103,115 @@ describe('BolesaClient', () => {
         await client.observeServiceOptions(auth, { payment_type: 'cc', weight: 1 });
         await client.me(auth);
 
-        assert.equal(entries.length, 1);
+        assert.equal(entries.length, 2);
         assert.equal(entries[0].type, 'http-client');
         assert.equal(entries[0].payload.method, 'POST');
         assert.equal(entries[0].payload.url, 'https://api.test/api/pcl/v1/services/options');
+        assert.equal(entries[1].payload.url, 'https://api.test/api/pcl/v1/me');
         assert.deepEqual(entries[0].payload.requestBody, { payment_type: 'cc', weight: 1 });
         assert.equal(entries[0].payload.statusCode, 200);
         assert.deepEqual(entries[0].payload.responseBody, responseBody);
+        assert.equal(JSON.stringify(entries).includes('test-token'), false);
+    });
+
+    it('records the AWB create request and the carrier rejection for NestLens', async () => {
+        originalFetch = globalThis.fetch;
+        const responseBody = {
+            success: false,
+            code: 'carrier_rejected',
+            message: 'The carrier rejected the shipment.',
+            errors: ['Order number is too long!'],
+        };
+        globalThis.fetch = mockFetch(422, responseBody);
+        const entries: Array<{ type: string; payload: Record<string, unknown> }> = [];
+        const client = new BolesaClient(
+            { apiBaseUrl: auth.apiBaseUrl, encryptionSecret: 'x' },
+            { collect: (type: string, payload: Record<string, unknown>) => entries.push({ type, payload }) } as never,
+        );
+        await assert.rejects(() => client.createAwb(
+            auth,
+            {
+                orderNumber: 'F8CE35EUZTDCWBRB',
+                carrierServiceSlug: 'speedaf_eg_dom_dry_std_dlv',
+                shipmentType: 'domestic',
+                shipmentOperation: 'ship',
+                shipmentCategory: 'dry',
+                paymentType: 'cc',
+                weightKg: 3,
+                shipper: { name: 'A', phone: '1', country_code: 'EG', resolution_hash: 'h1', address_line: 'x' },
+                consignee: { name: 'B', phone: '2', country_code: 'EG', resolution_hash: 'h2', address_line: 'y' },
+            },
+            'bolesa-f2-c2-a3',
+        ));
+        assert.equal(entries.length, 1);
+        assert.equal(entries[0].payload.method, 'POST');
+        assert.equal(entries[0].payload.path, '/awbs');
+        assert.equal((entries[0].payload.requestBody as { order_number?: string }).order_number, 'F8CE35EUZTDCWBRB');
+        assert.equal(entries[0].payload.statusCode, 422);
+        assert.deepEqual(entries[0].payload.responseBody, responseBody);
+        assert.deepEqual(entries[0].payload.requestHeaders, { 'Idempotency-Key': 'bolesa-f2-c2-a3' });
         assert.equal(JSON.stringify(entries[0].payload).includes('test-token'), false);
+    });
+
+    it('records a GET lookup query in NestLens instead of an empty body', async () => {
+        originalFetch = globalThis.fetch;
+        const responseBody = { success: true, data: [] };
+        globalThis.fetch = mockFetch(200, responseBody);
+        const entries: Array<{ type: string; payload: Record<string, unknown> }> = [];
+        const client = new BolesaClient(
+            { apiBaseUrl: auth.apiBaseUrl, encryptionSecret: 'x' },
+            { collect: (type: string, payload: Record<string, unknown>) => entries.push({ type, payload }) } as never,
+        );
+        await client.findAwbsByMeta(auth, 'vendure_shipment_key', 'bolesa-f2-c2');
+        assert.equal(entries.length, 1);
+        assert.equal(entries[0].payload.method, 'GET');
+        assert.equal(entries[0].payload.path, '/awbs?meta[vendure_shipment_key]=bolesa-f2-c2');
+        assert.deepEqual(entries[0].payload.requestBody, {
+            'meta[vendure_shipment_key]': 'bolesa-f2-c2',
+        });
+        assert.deepEqual(entries[0].payload.responseBody, responseBody);
+    });
+
+    it('keeps the carrier refusal and the request on the error for the shipment row', async () => {
+        originalFetch = globalThis.fetch;
+        globalThis.fetch = mockFetch(422, {
+            success: false,
+            code: 'carrier_rejected',
+            message: 'The carrier rejected the shipment.',
+            errors: { order_number: ['Order number is too long!'] },
+        });
+        const client = new BolesaClient({ apiBaseUrl: auth.apiBaseUrl, encryptionSecret: 'x' });
+        await assert.rejects(
+            () => client.createAwb(
+                auth,
+                {
+                    orderNumber: 'F8CE35EUZTDCWBRB',
+                    carrierServiceSlug: 'speedaf_eg_dom_dry_std_dlv',
+                    shipmentType: 'domestic',
+                    shipmentOperation: 'ship',
+                    shipmentCategory: 'dry',
+                    paymentType: 'cc',
+                    weightKg: 3,
+                    shipper: { name: 'A', phone: '1', country_code: 'EG', resolution_hash: 'h1', address_line: 'x' },
+                    consignee: { name: 'B', phone: '2', country_code: 'EG', resolution_hash: 'h2', address_line: 'y' },
+                    meta: {},
+                },
+                'bolesa-f2-c2-a3',
+            ),
+            (err: unknown) => {
+                assert.ok(err instanceof BolesaApiError);
+                assert.match(err.detail(), /order_number: Order number is too long!/);
+                assert.equal(err.exchange?.request.method, 'POST');
+                assert.equal(err.exchange?.request.path, '/awbs');
+                assert.equal(
+                    (err.exchange?.request.body as { order_number?: string }).order_number,
+                    'F8CE35EUZTDCWBRB',
+                );
+                assert.equal(err.exchange?.response.status, 422);
+                assert.equal(JSON.stringify(err.exchange).includes('test-token'), false);
+                return true;
+            },
+        );
     });
 
     it('service options HTTP 500 throws and does not yield a zero price', async () => {

@@ -32,11 +32,20 @@ export class BolesaApiError extends Error {
         return this.status >= 400 && this.status < 500 && this.status !== 409;
     }
 
+    /** What was sent to Partner, and what Partner returned. The token is not included. */
+    exchange?: PartnerExchange;
+
     /** Code, summary, and any field errors Partner returned (for example number_of_pieces). */
     detail(): string {
         const lines = [`${this.code}: ${this.message}`];
         const errors = (this.body as { errors?: unknown } | undefined)?.errors;
-        if (errors && typeof errors === 'object') {
+        if (Array.isArray(errors)) {
+            for (const msg of errors) {
+                if (typeof msg === 'string' && msg.trim()) {
+                    lines.push(msg.trim());
+                }
+            }
+        } else if (errors && typeof errors === 'object') {
             for (const [key, value] of Object.entries(errors as Record<string, unknown>)) {
                 const msgs = Array.isArray(value) ? value : [value];
                 for (const msg of msgs) {
@@ -48,6 +57,20 @@ export class BolesaApiError extends Error {
         }
         return lines.join(' — ');
     }
+}
+
+export interface PartnerExchange {
+    request: {
+        method: string;
+        path: string;
+        query?: Record<string, string>;
+        body?: unknown;
+        idempotencyKey?: string;
+    };
+    response: {
+        status: number;
+        body: unknown;
+    };
 }
 
 export interface BolesaRequestAuth {
@@ -148,7 +171,7 @@ export class BolesaClient {
         auth: BolesaRequestAuth,
         input: BolesaCreateAwbInput,
         idempotencyKey: string,
-    ): Promise<{ status: 'created' | 'queued'; awbs: BolesaAwb[]; correlationId?: string }> {
+    ): Promise<{ status: 'created' | 'queued'; awbs: BolesaAwb[]; correlationId?: string; exchange: PartnerExchange }> {
         const body = {
             shipment_type: input.shipmentType,
             shipment_operation: input.shipmentOperation,
@@ -179,12 +202,14 @@ export class BolesaClient {
                 status: 'queued',
                 awbs: [],
                 correlationId: raw.data?.data?.correlation_id ?? raw.data?.correlation_id,
+                exchange: raw.exchange,
             };
         }
         const awbsRaw = raw.data?.data?.awbs ?? raw.data?.awbs ?? [];
         return {
             status: 'created',
             awbs: (awbsRaw as any[]).map(mapAwb),
+            exchange: raw.exchange,
         };
     }
 
@@ -258,7 +283,7 @@ export class BolesaClient {
         body?: unknown,
         extraHeaders?: Record<string, string>,
         timeoutMs = 15_000,
-    ): Promise<{ status: number; data: any; headers: Headers }> {
+    ): Promise<{ status: number; data: any; headers: Headers; exchange: PartnerExchange }> {
         const base = (auth.apiBaseUrl || this.options.apiBaseUrl).replace(/\/$/, '');
         const url = `${base}${path.startsWith('/') ? path : `/${path}`}`;
         const headers: Record<string, string> = {
@@ -271,6 +296,7 @@ export class BolesaClient {
         }
 
         const startedAt = Date.now();
+        const exchange = partnerExchange(method, url, path, body, extraHeaders);
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), timeoutMs);
         let response: Response;
@@ -284,10 +310,15 @@ export class BolesaClient {
         } catch (e: any) {
             clearTimeout(timeout);
             Logger.error(`Bolesa request failed: ${method} ${path}: ${e?.message}`, loggerCtx);
-            this.recordServiceOptions(method, url, path, body, startedAt, {
+            exchange.response = { status: 503, body: { message: e?.message ?? 'Network error' } };
+            this.recordPartnerCall(method, url, path, body, extraHeaders, startedAt, {
                 error: e?.message ?? 'Network error',
+                responseBody: exchange.response.body,
+                statusCode: 503,
             });
-            throw new BolesaApiError('network_error', e?.message ?? 'Network error', 503);
+            const error = new BolesaApiError('network_error', e?.message ?? 'Network error', 503);
+            error.exchange = exchange;
+            throw error;
         }
         clearTimeout(timeout);
 
@@ -304,50 +335,51 @@ export class BolesaClient {
             const code = err?.code ?? `http_${response.status}`;
             const message = err?.message ?? `Bolesa API error ${response.status}`;
             Logger.warn(`Bolesa ${method} ${path} -> ${response.status} ${code}`, loggerCtx);
-            this.recordServiceOptions(method, url, path, body, startedAt, {
+            exchange.response = { status: response.status, body: data };
+            this.recordPartnerCall(method, url, path, body, extraHeaders, startedAt, {
                 statusCode: response.status,
                 responseBody: data,
                 error: message,
             });
-            throw new BolesaApiError(code, message, response.status, data);
+            const error = new BolesaApiError(code, message, response.status, data);
+            error.exchange = exchange;
+            throw error;
         }
 
-        this.recordServiceOptions(method, url, path, body, startedAt, {
+        exchange.response = { status: response.status, body: data };
+        this.recordPartnerCall(method, url, path, body, extraHeaders, startedAt, {
             statusCode: response.status,
             responseBody: data,
         });
-        return { status: response.status, data, headers: response.headers };
+        return { status: response.status, data, headers: response.headers, exchange };
     }
 
     /**
-     * NestLens watches Axios, and this client uses fetch, so the partner call
-     * never appeared under HTTP Client. Record `/services/options` directly.
-     * The API token stays out of the entry.
+     * NestLens watches Axios, and this client uses fetch, so partner calls
+     * never appeared under HTTP Client. Record each call directly.
+     * The API token stays in the request header and out of the entry.
      */
-    private recordServiceOptions(
+    private recordPartnerCall(
         method: string,
         url: string,
         path: string,
         requestBody: unknown,
+        extraHeaders: Record<string, string> | undefined,
         startedAt: number,
         outcome: { statusCode?: number; responseBody?: unknown; error?: string },
     ): void {
-        if (!this.nestLens || path.split('?')[0] !== '/services/options') {
+        if (!this.nestLens) {
             return;
         }
-        let hostname: string | undefined;
-        try {
-            hostname = new URL(url).hostname;
-        } catch {
-            hostname = undefined;
-        }
+        const recorded = recordedPartnerCall(url, path, requestBody, extraHeaders);
         try {
             const pending = this.nestLens.collect('http-client', {
                 method,
-                url,
-                hostname,
-                path,
-                requestBody,
+                url: recorded.url,
+                hostname: recorded.hostname,
+                path: recorded.path,
+                requestHeaders: recorded.requestHeaders,
+                requestBody: recorded.requestBody,
                 statusCode: outcome.statusCode,
                 responseBody: outcome.responseBody,
                 duration: Date.now() - startedAt,
@@ -358,6 +390,72 @@ export class BolesaClient {
             // A failed recording must not change the partner response.
         }
     }
+}
+
+/** Query string decoded, and a GET with no body shows those params in NestLens. */
+export function recordedPartnerCall(
+    url: string,
+    path: string,
+    requestBody: unknown,
+    extraHeaders?: Record<string, string>,
+): {
+    url: string;
+    hostname?: string;
+    path: string;
+    requestBody?: unknown;
+    requestHeaders?: Record<string, string>;
+} {
+    let hostname: string | undefined;
+    let recordedPath = path;
+    let query: Record<string, string> | undefined;
+    try {
+        const parsed = new URL(url);
+        hostname = parsed.hostname;
+        const params = Object.fromEntries(parsed.searchParams);
+        query = Object.keys(params).length > 0 ? params : undefined;
+        recordedPath = decodeURIComponent(path);
+    } catch {
+        hostname = undefined;
+    }
+    const headers = extraHeaders
+        ? Object.fromEntries(
+              Object.entries(extraHeaders).filter(([key]) => key.toLowerCase() !== 'xp-api-token'),
+          )
+        : undefined;
+    return {
+        url,
+        hostname,
+        path: recordedPath,
+        requestBody: requestBody !== undefined ? requestBody : query,
+        requestHeaders: headers && Object.keys(headers).length > 0 ? headers : undefined,
+    };
+}
+
+export function partnerExchange(
+    method: string,
+    url: string,
+    path: string,
+    body: unknown,
+    extraHeaders?: Record<string, string>,
+): PartnerExchange {
+    const recordedPath = path.split('?')[0] || path;
+    let query: Record<string, string> | undefined;
+    try {
+        const params = Object.fromEntries(new URL(url).searchParams);
+        query = Object.keys(params).length > 0 ? params : undefined;
+    } catch {
+        query = undefined;
+    }
+    return {
+        request: {
+            method,
+            path: recordedPath,
+            query,
+            body,
+            idempotencyKey: extraHeaders?.['Idempotency-Key'],
+        },
+        response: { status: 0, body: null },
+    };
 }
 
 export function mapServiceOption(raw: any): {

@@ -101,6 +101,8 @@ const shipmentQuery = `
       syncStatus
       labelAvailability
       lastError
+      partnerRequest
+      partnerResponse
       attempt
       codCollectionStatus
       codRemittanceStatus
@@ -863,6 +865,15 @@ function ShipmentCard({
                         </div>
                     )}
                 </div>
+            )}
+            {(data?.partnerRequest || data?.partnerResponse) && (
+                <pre className="max-h-64 overflow-auto rounded-md border border-border bg-muted/40 p-3 text-xs text-foreground">
+                    {JSON.stringify(
+                        { request: data.partnerRequest, response: data.partnerResponse },
+                        null,
+                        2,
+                    )}
+                </pre>
             )}
             {created && (
                 <div className="rounded-md border border-border bg-muted/40 p-3">

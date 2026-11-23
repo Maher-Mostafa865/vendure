@@ -90,6 +90,8 @@ export const adminApiExtensions = gql`
         lastError: String
         lastErrorAt: DateTime
         lastStatusAt: DateTime
+        partnerRequest: JSON
+        partnerResponse: JSON
     }
 
     type BolesaShipmentList {

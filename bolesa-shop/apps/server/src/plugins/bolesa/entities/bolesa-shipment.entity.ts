@@ -87,4 +87,12 @@ export class BolesaShipment extends VendureEntity implements ChannelAware {
 
     @Column({ type: 'simple-json', nullable: true })
     rawLastPayload: unknown;
+
+    /** Partner request that created or refused this AWB. The API token is not stored. */
+    @Column({ type: 'simple-json', nullable: true })
+    partnerRequest: unknown;
+
+    /** Partner response for that request, including a refusal body. */
+    @Column({ type: 'simple-json', nullable: true })
+    partnerResponse: unknown;
 }
