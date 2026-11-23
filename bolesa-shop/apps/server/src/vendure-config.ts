@@ -13,6 +13,7 @@ import { GraphiqlPlugin } from '@vendure/graphiql-plugin';
 import 'dotenv/config';
 import path from 'path';
 import { BolesaPlugin } from './plugins/bolesa';
+import { NestLensDevPlugin } from './plugins/nestlens/nestlens.plugin';
 import { StorefrontRevalidationPlugin } from './plugins/storefront-revalidation/storefront-revalidation.plugin';
 
 const IS_DEV = process.env.APP_ENV === 'dev';
@@ -122,6 +123,7 @@ export const config: VendureConfig = {
             },
         }),
         StorefrontRevalidationPlugin,
+        ...(IS_DEV ? [NestLensDevPlugin] : []),
         DashboardPlugin.init({
             route: 'dashboard',
             appDir: IS_DEV

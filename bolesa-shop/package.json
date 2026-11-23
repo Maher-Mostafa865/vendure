@@ -15,12 +15,20 @@
     "start:worker": "npm run start:worker -w server",
     "start:storefront": "npm run start -w storefront"
   },
+  "dependencies": {
+    "@nestjs/common": "12.5.1",
+    "@nestjs/core": "12.5.1"
+  },
   "devDependencies": {
     "concurrently": "^9.0.0"
   },
   "workspaces": [
     "apps/*"
   ],
+  "overrides": {
+    "@nestjs/common": "$@nestjs/common",
+    "@nestjs/core": "$@nestjs/core"
+  },
   "allowScripts": {
     "bcrypt": true,
     "esbuild": true,
