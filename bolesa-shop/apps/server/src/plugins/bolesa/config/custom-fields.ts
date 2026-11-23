@@ -93,13 +93,15 @@ export function getBolesaCustomFields(): {
                 nullable: true,
                 options: [{ value: 'cod' }, { value: 'prepaid' }],
                 label: [{ languageCode: LanguageCode.en, value: 'Payment preference (cod|prepaid)' }],
+                ui: { dashboard: false },
             },
             {
                 name: 'bolesaServiceSlug',
                 type: 'string',
-                public: true,
+                public: false,
                 nullable: true,
-                label: [{ languageCode: LanguageCode.en, value: 'Selected Bolesa carrier service' }],
+                label: [{ languageCode: LanguageCode.en, value: 'Carrier chosen by the admin for the AWB' }],
+                ui: { dashboard: false },
             },
             {
                 name: 'bolesaQuote',
@@ -109,6 +111,7 @@ export function getBolesaCustomFields(): {
                 readonly: true,
                 requiresPermission: Permission.ReadOrder,
                 label: [{ languageCode: LanguageCode.en, value: 'Persisted Bolesa quote JSON' }],
+                ui: { dashboard: false },
             },
         ],
         Fulfillment: [

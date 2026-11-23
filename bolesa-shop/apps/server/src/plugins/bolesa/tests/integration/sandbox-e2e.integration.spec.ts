@@ -201,6 +201,7 @@ describe('Sandbox E2E — real local Partner via Bolesa plugin', { skip: !ENABLE
             token: sandbox.token,
             shipperAddress,
             defaultServiceSlug: 'bosta_egy_dom_dry_std_dlv',
+            enabledServiceSlugs: ['bosta_egy_dom_dry_std_dlv'],
             shipmentCategory: 'dry',
             codEnabled: true,
             isActive: true,

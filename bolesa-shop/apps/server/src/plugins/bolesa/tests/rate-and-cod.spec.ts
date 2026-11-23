@@ -49,7 +49,9 @@ describe('BolesaRateService quote building', () => {
     it('public metadata never includes fee breakdown', () => {
         const built = rateService.buildQuote(option, 'cod', 0, 'passToCustomer', 'EGP')!;
         const meta = rateService.publicMetadata(built.quote);
-        assert.deepEqual(Object.keys(meta).sort(), ['carrierName', 'serviceSlug']);
+        assert.deepEqual(Object.keys(meta).sort(), ['carrierPriceMinor', 'profitMinor']);
+        assert.equal((meta as any).carrierName, undefined);
+        assert.equal((meta as any).serviceSlug, undefined);
         assert.equal((meta as any).codFeeMinor, undefined);
         assert.equal((meta as any).priceMinor, undefined);
     });

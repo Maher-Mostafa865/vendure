@@ -10,6 +10,7 @@ import './types-augmentation';
 import { adminApiExtensions, shopApiExtensions } from './api/api-extensions';
 import { BolesaAdminResolver } from './api/bolesa-admin.resolver';
 import { BolesaShopResolver } from './api/bolesa-shop.resolver';
+import { bolesaCodEligibilityChecker } from './config/bolesa-cod-eligibility-checker';
 import { bolesaCodPaymentHandler } from './config/bolesa-cod-payment-handler';
 import { bolesaEligibilityChecker } from './config/bolesa-eligibility-checker';
 import { bolesaFulfillmentHandler } from './config/bolesa-fulfillment-handler';
@@ -108,6 +109,13 @@ import { BolesaPluginOptions } from './types';
         pushUnique(
             config.paymentOptions.paymentMethodHandlers as any[],
             [bolesaCodPaymentHandler] as any[],
+            'code',
+        );
+        config.paymentOptions.paymentMethodEligibilityCheckers =
+            config.paymentOptions.paymentMethodEligibilityCheckers ?? [];
+        pushUnique(
+            config.paymentOptions.paymentMethodEligibilityCheckers as any[],
+            [bolesaCodEligibilityChecker] as any[],
             'code',
         );
 

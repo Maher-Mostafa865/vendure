@@ -44,7 +44,11 @@ export type PaymentPreference = 'cod' | 'prepaid';
 export interface PersistedBolesaQuote {
     serviceSlug: string;
     carrierName?: string;
+    /** Amount charged to the customer, including profit. */
     priceMinor: number;
+    /** Live carrier amount before the store's profit. */
+    carrierPriceMinor?: number;
+    profitMinor?: number;
     currencyCode: string;
     codFeeMinor?: number;
     paymentPreference: PaymentPreference;

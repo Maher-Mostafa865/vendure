@@ -62,6 +62,8 @@
     "noShippingMethods": "Keine Versandarten verfügbar. Bitte überprüfen Sie Ihre Adresse.",
     "free": "KOSTENLOS",
     "continueToPayment": "Weiter zur Zahlung",
+    "continueToShipping": "Weiter zum Versand",
+    "standardShipping": "Versand",
     "selectPaymentMethod": "Zahlungsmethode wählen",
     "noPaymentMethods": "Keine Zahlungsmethoden verfügbar.",
     "continueToReview": "Weiter zur Überprüfung",

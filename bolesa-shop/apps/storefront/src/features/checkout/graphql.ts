@@ -48,6 +48,7 @@ export const GetActiveOrderForCheckoutQuery = graphql(`
                 shippingMethod {
                     id
                     name
+                    code
                     description
                 }
                 priceWithTax

@@ -9,7 +9,16 @@ let connectionService: BolesaConnectionService;
 
 export const bolesaEligibilityChecker = new ShippingEligibilityChecker({
     code: BOLESA_ELIGIBILITY_CHECKER_CODE,
-    description: [{ languageCode: LanguageCode.en, value: 'Eligible when Bolesa city hash is set and connection is active' }],
+    description: [
+        {
+            languageCode: LanguageCode.en,
+            value: 'Egypt addresses only, and only while the Bolesa connection is active',
+        },
+        {
+            languageCode: LanguageCode.ar,
+            value: 'عناوين مصر فقط، وعندما يكون اتصال Bolesa شغالاً',
+        },
+    ],
     args: {},
     init(injector) {
         connectionService = injector.get(BolesaConnectionService);

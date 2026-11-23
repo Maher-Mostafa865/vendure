@@ -129,10 +129,7 @@ describe('eligible shipping calculation', () => {
     }
 
     const ctx = { channelId: 1, channel: { defaultCurrencyCode: 'EGP' } } as any;
-    const args = [
-        { name: 'carrierServiceSlug', value: 'auto' },
-        { name: 'flatRateFallbackMinor', value: '0' },
-    ] as any;
+    const args = [] as any;
 
     it('omits the method when cc_price and cod_price are null and does not cache that response', async () => {
         let cached = false;
@@ -162,7 +159,7 @@ describe('eligible shipping calculation', () => {
             set: async () => {
                 cached = true;
             },
-        });
+        }, { enabledServiceSlugs: ['bosta'] });
         const result = await bolesaShippingCalculator.calculate(ctx, order(), args, {} as any);
         assert.ok(result);
         assert.equal(result.price, 0);
@@ -174,14 +171,14 @@ describe('eligible shipping calculation', () => {
             httpStatus: 200,
             services: [{ slug: 'bosta', ccPrice: 40, codPrice: 45, currencyCode: 'EGP' }],
             rawPrices: [{ slug: 'bosta', ccPrice: 'positive', codPrice: 'positive' }],
-        }));
+        }), undefined, { enabledServiceSlugs: ['bosta'] });
         const result = await bolesaShippingCalculator.calculate(ctx, order(), args, {} as any);
         assert.ok(result);
         assert.equal(result.price, 4000);
         assert.notEqual(result.price, 0);
     });
 
-    it('returns every priced carrier and charges the shopper-selected service', async () => {
+    it('charges the highest-priority service plus profit and hides the carrier', async () => {
         await wire(async () => ({
             httpStatus: 200,
             services: [
@@ -191,20 +188,19 @@ describe('eligible shipping calculation', () => {
                 { slug: 'speedaf', carrierName: 'Speedaf', ccPrice: 80.37, codPrice: 80.37, currencyCode: 'EGP' },
             ],
             rawPrices: [],
-        }));
+        }), undefined, {
+            enabledServiceSlugs: ['jt', 'aramex', 'speedaf'],
+            serviceOffers: [
+                { slug: 'speedaf', priority: 1, profitMinor: 500 },
+                { slug: 'aramex', priority: 2, profitMinor: 0 },
+            ],
+        });
         const selected = order();
-        selected.customFields.bolesaServiceSlug = 'speedaf';
+        selected.customFields.bolesaServiceSlug = 'aramex';
         const result = await bolesaShippingCalculator.calculate(ctx, selected, args, {} as any);
         assert.ok(result);
-        assert.equal(result.price, 8037);
-        const options = (result.metadata as any).options;
-        assert.equal(options.length, 3);
-        assert.deepEqual(options.map((choice: { slug: string; priceMinor: number }) => [choice.slug, choice.priceMinor]), [
-            ['jt', 7761],
-            ['aramex', 9554],
-            ['speedaf', 8037],
-        ]);
-        assert.equal((result.metadata as any).serviceSlug, 'speedaf');
+        assert.equal(result.price, 8537);
+        assert.deepEqual(result.metadata, {});
     });
 
     it('does not charge a SAR price on an EGP channel', async () => {
@@ -212,7 +208,7 @@ describe('eligible shipping calculation', () => {
             httpStatus: 200,
             services: [{ slug: 'bosta', ccPrice: 11.4, codPrice: 11.4, currencyCode: 'SAR' }],
             rawPrices: [{ slug: 'bosta', ccPrice: 'positive', codPrice: 'positive' }],
-        }));
+        }), undefined, { enabledServiceSlugs: ['bosta'] });
         const result = await bolesaShippingCalculator.calculate(ctx, order(), args, {} as any);
         assert.equal(result, undefined);
     });
@@ -222,7 +218,7 @@ describe('eligible shipping calculation', () => {
             httpStatus: 200,
             services: [{ slug: 'bosta', ccPrice: 11.4, codPrice: 11.4 }],
             rawPrices: [{ slug: 'bosta', ccPrice: 'positive', codPrice: 'positive' }],
-        }));
+        }), undefined, { enabledServiceSlugs: ['bosta'] });
         const result = await bolesaShippingCalculator.calculate(ctx, order(), args, {} as any);
         assert.equal(result, undefined);
     });
@@ -232,11 +228,11 @@ describe('eligible shipping calculation', () => {
             httpStatus: 200,
             services: [{ slug: 'bosta', ccPrice: 11.4, codPrice: 11.4, currencyCode: 'egp' }],
             rawPrices: [{ slug: 'bosta', ccPrice: 'positive', codPrice: 'positive' }],
-        }));
+        }), undefined, { enabledServiceSlugs: ['bosta'] });
         const result = await bolesaShippingCalculator.calculate(ctx, order(), args, {} as any);
         assert.ok(result);
         assert.equal(result.price, 1140);
-        assert.equal((result.metadata as any).options[0].priceMinor, 1140);
+        assert.deepEqual(result.metadata, {});
     });
 
     it('sends the merchant allow-open policy and offers only enabled services', async () => {
@@ -260,7 +256,7 @@ describe('eligible shipping calculation', () => {
         assert.equal(body.allow_open, true);
         assert.ok(result);
         assert.equal(result.price, 8000);
-        assert.deepEqual((result.metadata as any).options.map((choice: { slug: string }) => choice.slug), ['aramex']);
+        assert.deepEqual(result.metadata, {});
     });
 
     it('still offers priced carriers when the default service has no quote', async () => {
@@ -279,7 +275,7 @@ describe('eligible shipping calculation', () => {
         const result = await bolesaShippingCalculator.calculate(ctx, order(), args, {} as any);
         assert.ok(result);
         assert.equal(result.price, 8000);
-        assert.deepEqual((result.metadata as any).options.map((choice: { slug: string }) => choice.slug), ['aramex']);
+        assert.deepEqual(result.metadata, {});
     });
 
     it('does not switch to another carrier when the selected service is disabled', async () => {
@@ -298,7 +294,9 @@ describe('eligible shipping calculation', () => {
         const selected = order();
         selected.customFields.bolesaServiceSlug = 'bosta';
         const result = await bolesaShippingCalculator.calculate(ctx, selected, args, {} as any);
-        assert.equal(result, undefined);
+        assert.ok(result);
+        assert.equal(result.price, 8000);
+        assert.deepEqual(result.metadata, {});
     });
 
     it('does not turn a Partner HTTP error into a zero shipping price', async () => {
@@ -318,6 +316,8 @@ describe('rate cache fingerprint', () => {
         assert.notEqual(egp, sar);
         const open = BolesaRateService.orderFingerprint(sample, 'prepaid', 'EGP', true);
         assert.notEqual(egp, open);
+        const cod = BolesaRateService.orderFingerprint(sample, 'cod', 'EGP');
+        assert.notEqual(egp, cod);
     });
 });
 

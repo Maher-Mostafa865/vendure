@@ -18,10 +18,21 @@ import {
     PersistedBolesaQuote,
 } from '../types';
 import { majorToMinor, minorToMajor } from '../util/money';
+import { merchantServiceSlugs } from '../util/merchant-services';
 import { partnerAddressLine } from '../util/partner-address-line';
+import { normalizeAccountServices } from '../util/service-rates';
+import { normalizeServiceOffers } from '../util/service-offer';
 import { mappedPricePresence, PricePresence } from '../util/shipping-diagnostics';
 import { BolesaConnectionService } from './bolesa-connection.service';
 import { BolesaClient, ServiceOptionPriceState } from './bolesa-client.service';
+
+export interface BolesaCarrierChoice {
+    slug: string;
+    name: string;
+    carrierPriceMinor: number;
+    profitMinor: number;
+    currencyCode: string;
+}
 
 export interface BolesaRateLookup {
     services: BolesaServiceOption[];
@@ -163,10 +174,13 @@ export class BolesaRateService {
         // A 200 with only null prices is an upstream pricing failure, not a quote.
         // Caching it hides bolesa-shipping for the whole TTL after prices recover.
         // A real zero is finite and is cached.
-        if (this.cache && observed.services.some(serviceHasFinitePrice)) {
-            await this.cache.set(cacheKey, observed.services as any[], {
-                ttl: this.options.rateCacheTtlMs ?? 600_000,
-            });
+        if (observed.services.some(serviceHasFinitePrice)) {
+            if (this.cache) {
+                await this.cache.set(cacheKey, observed.services as any[], {
+                    ttl: this.options.rateCacheTtlMs ?? 600_000,
+                });
+            }
+            await this.rememberReturnedRates(ctx, observed.services);
         }
         return {
             services: observed.services,
@@ -174,6 +188,64 @@ export class BolesaRateService {
             cacheHit: false,
             rawPrices: observed.rawPrices,
         };
+    }
+
+    /**
+     * Carriers Partner can price for this order. Profit comes from the saved
+     * service settings. The customer's charged shipping price is not changed.
+     */
+    async carrierChoicesForOrder(
+        ctx: RequestContext,
+        order: Order,
+    ): Promise<{ paymentPreference: PaymentPreference; selectedSlug: string; choices: BolesaCarrierChoice[] }> {
+        const raw = (order as any).customFields?.paymentPreference;
+        const preference: PaymentPreference = raw === 'cod' ? 'cod' : 'prepaid';
+        const conn = await this.connectionService.requireActive(ctx);
+        const lookup = await this.lookupOptionsForOrder(ctx, order, preference);
+        const enabled = new Set(merchantServiceSlugs(conn.enabledServiceSlugs));
+        const offers = new Map(normalizeServiceOffers(conn.serviceOffers).map(offer => [offer.slug, offer]));
+        const names = new Map(normalizeAccountServices(conn.accountServices).map(row => [row.slug, row.name]));
+        const channel = ctx.channel.defaultCurrencyCode.trim().toUpperCase();
+        const ranked: Array<BolesaCarrierChoice & { priority: number }> = [];
+        for (const service of lookup.services) {
+            if (!enabled.has(service.slug)) {
+                continue;
+            }
+            const partner = service.currencyCode?.trim().toUpperCase();
+            if (!partner || partner !== channel) {
+                continue;
+            }
+            const major = preference === 'cod' ? service.codPrice : service.ccPrice;
+            if (major == null || Number.isNaN(Number(major))) {
+                continue;
+            }
+            const offer = offers.get(service.slug);
+            ranked.push({
+                slug: service.slug,
+                name: names.get(service.slug) || service.label || service.carrierName || service.slug,
+                carrierPriceMinor: majorToMinor(Number(major)),
+                profitMinor: offer?.profitMinor ?? 0,
+                currencyCode: partner,
+                priority: offer?.priority ?? 100,
+            });
+        }
+        ranked.sort((a, b) => a.priority - b.priority || a.slug.localeCompare(b.slug));
+        return {
+            paymentPreference: preference,
+            selectedSlug: String((order as any).customFields?.bolesaServiceSlug ?? '').trim(),
+            choices: ranked.map(({ priority: _priority, ...choice }) => choice),
+        };
+    }
+
+    private async rememberReturnedRates(ctx: RequestContext, services: BolesaServiceOption[]): Promise<void> {
+        if (typeof this.connectionService.rememberReturnedRates !== 'function') {
+            return;
+        }
+        try {
+            await this.connectionService.rememberReturnedRates(ctx, services);
+        } catch (e: any) {
+            Logger.warn(`Could not store returned carrier rates: ${e?.message}`, loggerCtx);
+        }
     }
 
     pickOption(
@@ -247,10 +319,13 @@ export class BolesaRateService {
             major = major * (1 + markupPercent / 100);
         }
         const priceMinor = majorToMinor(major, this.moneyPrecision());
+        const carrierPriceMinor = majorToMinor(Number(baseMajor), this.moneyPrecision());
         const quote: PersistedBolesaQuote = {
             serviceSlug: option.slug,
             carrierName: option.carrierName,
             priceMinor,
+            carrierPriceMinor,
+            profitMinor: Math.max(0, priceMinor - carrierPriceMinor),
             currencyCode: partnerCurrency,
             codFeeMinor:
                 option.codCollectionFee != null
@@ -284,11 +359,14 @@ export class BolesaRateService {
         return typeof precision === 'number' ? precision : 2;
     }
 
-    /** Whitelist for Shop API ShippingMethodQuote.metadata — never include contracts/fees breakdown. */
+    /**
+     * Shop API ShippingMethodQuote.metadata.
+     * Carrier name and service slug stay off this object. The customer sees the price only.
+     */
     publicMetadata(quote: PersistedBolesaQuote) {
         return {
-            serviceSlug: quote.serviceSlug,
-            carrierName: quote.carrierName,
+            carrierPriceMinor: quote.carrierPriceMinor,
+            profitMinor: quote.profitMinor,
         };
     }
 }

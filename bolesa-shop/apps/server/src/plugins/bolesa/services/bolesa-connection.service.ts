@@ -10,8 +10,16 @@ import {
 
 import { BOLESA_PLUGIN_OPTIONS, loggerCtx } from '../constants';
 import { BolesaConnection } from '../entities/bolesa-connection.entity';
-import { BolesaPluginOptions } from '../types';
+import { BolesaPluginOptions, BolesaServiceOption } from '../types';
 import { merchantServiceSlugs } from '../util/merchant-services';
+import { normalizeServiceOffers, ServiceOfferConfig } from '../util/service-offer';
+import {
+    mergeServiceRates,
+    normalizeAccountServices,
+    normalizeServiceRates,
+    sameAccountServices,
+    sameServiceRates,
+} from '../util/service-rates';
 import { BolesaApiError, BolesaClient } from './bolesa-client.service';
 
 export interface UpdateBolesaConnectionInput {
@@ -20,6 +28,8 @@ export interface UpdateBolesaConnectionInput {
     shipperAddress?: Record<string, unknown> | null;
     defaultServiceSlug?: string | null;
     enabledServiceSlugs?: string[] | null;
+    serviceOffers?: ServiceOfferConfig[] | null;
+    codMinimumMajor?: number;
     allowOpen?: boolean;
     autoCreateAwb?: boolean;
     shipmentCategory?: 'dry' | 'heavy' | 'cold';
@@ -44,6 +54,7 @@ export class BolesaConnectionService {
         return this.connection.rawConnection.getRepository(BolesaConnection)
             .createQueryBuilder('c')
             .innerJoin('c.channels', 'ch', 'ch.id = :channelId', { channelId: ctx.channelId })
+            .orderBy('c.id', 'ASC')
             .getOne();
     }
 
@@ -95,6 +106,18 @@ export class BolesaConnectionService {
         if (input.enabledServiceSlugs !== undefined) {
             entity.enabledServiceSlugs = merchantServiceSlugs(input.enabledServiceSlugs);
         }
+        if (input.serviceOffers !== undefined) {
+            const enabled = merchantServiceSlugs(entity.enabledServiceSlugs);
+            entity.serviceOffers = normalizeServiceOffers(input.serviceOffers)
+                .filter(offer => enabled.includes(offer.slug));
+        }
+        if (input.codMinimumMajor !== undefined) {
+            const minimum = Number(input.codMinimumMajor);
+            if (!Number.isFinite(minimum) || minimum < 0) {
+                throw new UserInputError('Cash on delivery minimum must be zero or greater.');
+            }
+            entity.codMinimumMajor = minimum;
+        }
         if (input.allowOpen !== undefined) {
             entity.allowOpen = input.allowOpen;
         }
@@ -128,6 +151,7 @@ export class BolesaConnectionService {
             entity.isActive = input.isActive;
         }
 
+        await this.keepStoredRates(ctx, entity);
         return this.connection.getRepository(ctx, BolesaConnection).save(entity);
     }
 
@@ -137,9 +161,34 @@ export class BolesaConnectionService {
     ): Promise<Array<{ slug: string; name: string; logoUrl?: string }>> {
         const conn = await this.getForChannel(ctx);
         if (!conn?.tokenEncrypted) {
-            return [];
+            return normalizeAccountServices(conn?.accountServices);
         }
-        return this.client.listAccountServices(this.authFor(conn));
+        try {
+            const live = await this.client.listAccountServices(this.authFor(conn));
+            await this.storeAccountServices(conn, live);
+            return live;
+        } catch (e: any) {
+            const message = e instanceof BolesaApiError ? `${e.code}: ${e.message}` : e?.message;
+            Logger.warn(`Bolesa service list failed; using the saved list: ${message}`, loggerCtx);
+            return normalizeAccountServices(conn.accountServices);
+        }
+    }
+
+    /**
+     * Remember finite prices from one services/options response.
+     * A later checkout still calls the API. These rows are only the last return.
+     */
+    async rememberReturnedRates(ctx: RequestContext, services: BolesaServiceOption[]): Promise<void> {
+        const conn = await this.getForChannel(ctx);
+        if (!conn) {
+            return;
+        }
+        const next = mergeServiceRates(conn.serviceRates, services, new Date().toISOString());
+        if (sameServiceRates(conn.serviceRates, next)) {
+            return;
+        }
+        conn.serviceRates = next;
+        await this.writeJsonColumn(conn.id, 'serviceRates', next);
     }
 
     async testConnection(ctx: RequestContext): Promise<{ ok: boolean; message: string }> {
@@ -147,6 +196,7 @@ export class BolesaConnectionService {
         try {
             await this.client.me(this.authFor(conn));
             conn.lastVerifiedAt = new Date();
+            await this.keepStoredRates(ctx, conn);
             await this.connection.getRepository(ctx, BolesaConnection).save(conn);
             return { ok: true, message: 'Bolesa Partner API token accepted' };
         } catch (e: any) {
@@ -169,6 +219,10 @@ export class BolesaConnectionService {
             shipperAddress: conn.shipperAddress,
             defaultServiceSlug: conn.defaultServiceSlug,
             enabledServiceSlugs: merchantServiceSlugs(conn.enabledServiceSlugs),
+            serviceOffers: normalizeServiceOffers(conn.serviceOffers),
+            accountServices: normalizeAccountServices(conn.accountServices),
+            serviceRates: normalizeServiceRates(conn.serviceRates),
+            codMinimumMajor: Number.isFinite(Number(conn.codMinimumMajor)) ? Number(conn.codMinimumMajor) : 1000,
             allowOpen: conn.allowOpen === true,
             autoCreateAwb: conn.autoCreateAwb === true,
             shipmentCategory: conn.shipmentCategory,
@@ -205,12 +259,19 @@ export class BolesaConnectionService {
         }
         let catalog: string[] = [];
         try {
-            catalog = (await this.client.listAccountServices(this.authFor(entity))).map(row => row.slug);
+            const live = await this.client.listAccountServices(this.authFor(entity));
+            this.assignAccountServices(entity, live);
+            catalog = live.map(row => row.slug);
         } catch (e: any) {
+            catalog = normalizeAccountServices(entity.accountServices).map(row => row.slug);
+            if (!catalog.length) {
+                const message = e instanceof BolesaApiError ? `${e.code}: ${e.message}` : e?.message;
+                throw new UserInputError(
+                    `Could not verify Bolesa services: ${message}. The service list was not saved.`,
+                );
+            }
             const message = e instanceof BolesaApiError ? `${e.code}: ${e.message}` : e?.message;
-            throw new UserInputError(
-                `Could not verify Bolesa services: ${message}. The service list was not saved.`,
-            );
+            Logger.warn(`Bolesa service list failed; checked the saved list: ${message}`, loggerCtx);
         }
         const unknown = [...enabled, fallback].filter(slug => slug && !catalog.includes(slug));
         if (unknown.length) {
@@ -218,6 +279,52 @@ export class BolesaConnectionService {
                 `Unknown Bolesa service: ${[...new Set(unknown)].join(', ')}. Refresh the account service list.`,
             );
         }
+    }
+
+    private async storeAccountServices(
+        entity: BolesaConnection,
+        live: Array<{ slug: string; name: string }>,
+    ): Promise<void> {
+        if (!this.assignAccountServices(entity, live) || !entity.id) {
+            return;
+        }
+        await this.writeJsonColumn(entity.id, 'accountServices', entity.accountServices);
+    }
+
+    /** A full entity save must not replace rates stored by a checkout that finished during this request. */
+    private async keepStoredRates(ctx: RequestContext, entity: BolesaConnection): Promise<void> {
+        if (!entity.id) {
+            return;
+        }
+        const latest = await this.connection.getRepository(ctx, BolesaConnection).findOne({
+            where: { id: entity.id },
+        });
+        if (latest) {
+            entity.serviceRates = latest.serviceRates;
+        }
+    }
+
+    private async writeJsonColumn(
+        id: BolesaConnection['id'],
+        column: 'accountServices' | 'serviceRates',
+        value: unknown,
+    ): Promise<void> {
+        await this.connection.rawConnection.query(
+            `UPDATE "bolesa_connection" SET "${column}" = $1 WHERE id = $2`,
+            [JSON.stringify(value), id],
+        );
+    }
+
+    private assignAccountServices(
+        entity: BolesaConnection,
+        live: Array<{ slug: string; name: string }>,
+    ): boolean {
+        const catalog = normalizeAccountServices(live);
+        if (sameAccountServices(entity.accountServices, catalog)) {
+            return false;
+        }
+        entity.accountServices = catalog;
+        return true;
     }
 
     private encrypt(plaintext: string): string {

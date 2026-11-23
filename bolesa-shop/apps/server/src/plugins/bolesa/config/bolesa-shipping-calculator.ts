@@ -7,6 +7,7 @@ import { bindRateCache, BolesaRateService } from '../services/bolesa-rate.servic
 import { merchantServiceSlugs } from '../util/merchant-services';
 import { PaymentPreference } from '../types';
 import { PricePresence } from '../util/shipping-diagnostics';
+import { normalizeServiceOffers, quoteCustomerShipping } from '../util/service-offer';
 
 export interface ShippingCalculationLog {
     executed: true;
@@ -37,68 +38,41 @@ let connectionService: BolesaConnectionService;
 
 export const bolesaShippingCalculator = new ShippingCalculator({
     code: BOLESA_SHIPPING_CALCULATOR_CODE,
-    description: [{ languageCode: LanguageCode.en, value: 'Live Bolesa Partner API rates' }],
-    args: {
-        carrierServiceSlug: {
-            type: 'string',
-            defaultValue: 'auto',
-            label: [{ languageCode: LanguageCode.en, value: 'Carrier service slug (or auto)' }],
+    description: [
+        {
+            languageCode: LanguageCode.en,
+            value: 'Shipping price from Bolesa Connection: the live carrier rate plus your profit',
         },
-        flatRateFallbackMinor: {
-            type: 'int',
-            defaultValue: 0,
-            label: [
-                {
-                    languageCode: LanguageCode.en,
-                    value: 'Fallback price in minor units if Bolesa fails (0 = hide method)',
-                },
-            ],
+        {
+            languageCode: LanguageCode.ar,
+            value: 'سعر الشحن من صفحة Bolesa Connection: سعر شركة الشحن بالإضافة إلى المكسب',
         },
-    },
+    ],
+    args: {},
     init(injector) {
         rateService = injector.get(BolesaRateService);
         connectionService = injector.get(BolesaConnectionService);
         bindRateCache(injector, rateService);
     },
-    calculate: async (ctx, order, args) => {
+    calculate: async (ctx, order) => {
         const preference = ((order as any).customFields?.paymentPreference ?? 'prepaid') as PaymentPreference;
         try {
             const conn = await connectionService.requireActive(ctx);
             const lookup = await rateService.lookupOptionsForOrder(ctx, order, preference);
             const enabled = merchantServiceSlugs(conn.enabledServiceSlugs);
-            const offered = enabled.length
-                ? lookup.services.filter(service => enabled.includes(service.slug))
-                : lookup.services;
-            const customerSlug = String((order as any).customFields?.bolesaServiceSlug ?? '').trim();
-            const defaultSlug = String(conn.defaultServiceSlug ?? '').trim();
-            const choices = rateService.quoteChoices(
-                offered,
+            const quoted = quoteCustomerShipping({
+                services: lookup.services,
+                enabledSlugs: enabled,
+                offers: normalizeServiceOffers(conn.serviceOffers),
                 preference,
-                conn.markupPercent ?? 0,
-                conn.codFeeMode ?? 'absorb',
-                ctx.channel.defaultCurrencyCode,
-            );
-            // A shopper's choice that cannot be quoted hides the method.
-            // The merchant default is only the price shown before they choose.
-            // If that default has no quote, the other priced carriers stay available.
-            const customerChoice = customerSlug && customerSlug !== 'auto' ? customerSlug : '';
-            const chosen = customerChoice
-                ? choices.find(choice => choice.slug === customerChoice)
-                : choices.find(choice => choice.slug === defaultSlug) ?? choices[0];
-            const blockedReason = !chosen
-                ? customerChoice && enabled.length && !enabled.includes(customerChoice)
-                    ? 'service_not_enabled'
-                    : customerChoice
-                      ? 'slug_not_found'
-                      : offered.length
-                        ? 'missing_price'
-                        : 'no_services'
-                : undefined;
-            const option = chosen
-                ? lookup.services.find(service => service.slug === chosen.slug)
+                currencyCode: ctx.channel.defaultCurrencyCode,
+            });
+            const option = quoted
+                ? lookup.services.find(service => service.slug === quoted.slug)
                 : undefined;
             const prices = rateService.priceStateFor(lookup, option);
-            if (!option || !chosen) {
+            if (!quoted) {
+                const offered = lookup.services.filter(service => enabled.includes(service.slug));
                 logCalculation({
                     executed: true,
                     cacheHit: lookup.cacheHit,
@@ -109,37 +83,14 @@ export const bolesaShippingCalculator = new ShippingCalculator({
                     outcome: 'undefined',
                     reason: lookup.skipReason === 'missing_resolution_hash'
                         ? 'missing_resolution_hash'
-                        : blockedReason === 'service_not_enabled' || blockedReason === 'slug_not_found'
-                          ? blockedReason
+                        : !enabled.length
+                          ? 'service_not_enabled'
                           : !offered.length
                             ? lookup.services.length
                               ? 'service_not_enabled'
                               : 'no_services'
                             : currencyBlockReason(offered, ctx.channel.defaultCurrencyCode) ??
                               'missing_price',
-                    priceMinor: null,
-                    quotePersisted: false,
-                });
-                return undefined;
-            }
-            const built = rateService.buildQuote(
-                option,
-                preference,
-                conn.markupPercent ?? 0,
-                conn.codFeeMode ?? 'absorb',
-                ctx.channel.defaultCurrencyCode,
-            );
-            if (!built) {
-                logCalculation({
-                    executed: true,
-                    cacheHit: lookup.cacheHit,
-                    httpStatus: lookup.httpStatus,
-                    serviceCount: lookup.services.length,
-                    ccPrice: prices.ccPrice,
-                    codPrice: prices.codPrice,
-                    outcome: 'undefined',
-                    reason:
-                        currencyBlockReason([option], ctx.channel.defaultCurrencyCode) ?? 'missing_price',
                     priceMinor: null,
                     quotePersisted: false,
                 });
@@ -154,25 +105,18 @@ export const bolesaShippingCalculator = new ShippingCalculator({
                 codPrice: prices.codPrice,
                 outcome: 'price',
                 reason: 'quoted',
-                priceMinor: built.priceMinor,
+                priceMinor: quoted.customerPriceMinor,
                 quotePersisted: false,
             });
             return {
-                price: built.priceMinor,
-                // Bolesa fee breakdown already includes VAT components; avoid double tax.
+                price: quoted.customerPriceMinor,
+                // The customer price already includes the store profit. Do not add tax again.
                 priceIncludesTax: true,
                 taxRate: 0,
-                metadata: {
-                    ...rateService.publicMetadata(built.quote),
-                    options: choices,
-                },
+                metadata: {},
             };
         } catch (e: any) {
             const httpStatus = e instanceof BolesaApiError ? e.status : null;
-            const fallback = Number(args.flatRateFallbackMinor ?? 0);
-            const useFallback = Number.isFinite(fallback) && fallback > 0;
-            // Partner errors stay omitted unless an explicit positive fallback is configured.
-            // A fallback of 0 must not be returned as a free shipping price.
             logCalculation({
                 executed: true,
                 cacheHit: false,
@@ -180,19 +124,11 @@ export const bolesaShippingCalculator = new ShippingCalculator({
                 serviceCount: 0,
                 ccPrice: 'undefined',
                 codPrice: 'undefined',
-                outcome: useFallback ? 'price' : 'undefined',
+                outcome: 'undefined',
                 reason: 'partner_http_error',
-                priceMinor: useFallback ? fallback : null,
+                priceMinor: null,
                 quotePersisted: false,
             });
-            if (useFallback) {
-                return {
-                    price: fallback,
-                    priceIncludesTax: true,
-                    taxRate: 0,
-                    metadata: { fallback: true },
-                };
-            }
             return undefined;
         }
     },

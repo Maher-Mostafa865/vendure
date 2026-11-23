@@ -1,6 +1,9 @@
 import { Channel, ChannelAware, DeepPartial, VendureEntity } from '@vendure/core';
 import { Column, Entity, Index, JoinTable, ManyToMany } from 'typeorm';
 
+import { ServiceOfferConfig } from '../util/service-offer';
+import { SavedAccountService, SavedServiceRate } from '../util/service-rates';
+
 @Entity('bolesa_connection')
 export class BolesaConnection extends VendureEntity implements ChannelAware {
     constructor(input?: DeepPartial<BolesaConnection>) {
@@ -40,9 +43,25 @@ export class BolesaConnection extends VendureEntity implements ChannelAware {
     @Column({ type: 'varchar', length: 128, nullable: true })
     defaultServiceSlug: string | null;
 
-    /** Partner slugs the shopper may choose. Empty means every priced service. */
+    /** Partner slugs that may supply the customer shipping price. Empty offers nothing. */
     @Column({ type: 'simple-json', nullable: true })
     enabledServiceSlugs: string[] | null;
+
+    /** Priority, standard price, and profit for each enabled service. */
+    @Column({ type: 'simple-json', nullable: true })
+    serviceOffers: ServiceOfferConfig[] | null;
+
+    /** Last successful Partner GET /services list. Shown when the live list cannot be loaded. */
+    @Column({ type: 'simple-json', nullable: true })
+    accountServices: SavedAccountService[] | null;
+
+    /** Last finite prices from POST /services/options. Not the price charged at checkout. */
+    @Column({ type: 'simple-json', nullable: true })
+    serviceRates: SavedServiceRate[] | null;
+
+    /** Goods total, in major units, required before cash on delivery is offered. */
+    @Column({ type: 'float', default: 1000 })
+    codMinimumMajor: number;
 
     /** Sent as Partner allow_open on price comparison and AWB create. */
     @Column({ type: 'boolean', default: false })

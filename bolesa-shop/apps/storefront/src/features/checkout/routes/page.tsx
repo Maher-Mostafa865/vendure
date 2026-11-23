@@ -11,6 +11,8 @@ import {CheckoutProvider} from './checkout-provider';
 import {noIndexRobots} from '@/config/metadata';
 import {getActiveCustomer} from '@/features/account/customer';
 import {getAvailableCountriesCached} from '@/features/checkout/countries';
+import {getBolesaCheckoutPolicy} from './actions';
+import {isBolesaShippingCode} from './bolesa-choices';
 
 export async function generateMetadata(): Promise<Metadata> {
     const locale = await getRouteLocale();
@@ -28,15 +30,16 @@ export default async function CheckoutPage() {
     const customer = await getActiveCustomer();
     const isGuest = !customer;
 
-    const [orderRes, addressesRes, countries, shippingMethodsRes, paymentMethodsRes] =
+    const [orderRes, addressesRes, countries, shippingMethodsRes, paymentMethodsRes, checkoutPolicy] =
         await Promise.all([
-            query(GetActiveOrderForCheckoutQuery, {}, {useAuthToken: true, currencyCode}),
+            query(GetActiveOrderForCheckoutQuery, {}, {useAuthToken: true, currencyCode, fetch: {cache: 'no-store'}}),
             isGuest
                 ? Promise.resolve({ data: { activeCustomer: null } })
                 : query(GetCustomerAddressesQuery, {}, {useAuthToken: true}),
             getAvailableCountriesCached(locale),
-            query(GetEligibleShippingMethodsQuery, {}, {useAuthToken: true, currencyCode}),
-            query(GetEligiblePaymentMethodsQuery, {}, {useAuthToken: true, currencyCode}),
+            query(GetEligibleShippingMethodsQuery, {}, {useAuthToken: true, currencyCode, fetch: {cache: 'no-store'}}),
+            query(GetEligiblePaymentMethodsQuery, {}, {useAuthToken: true, currencyCode, fetch: {cache: 'no-store'}}),
+            getBolesaCheckoutPolicy(),
         ]);
 
     const activeOrder = orderRes.data.activeOrder;
@@ -50,9 +53,19 @@ export default async function CheckoutPage() {
     }
 
     const addresses = addressesRes.data.activeCustomer?.addresses || [];
-    const shippingMethods = shippingMethodsRes.data.eligibleShippingMethods || [];
+    const shippingMethods = (shippingMethodsRes.data.eligibleShippingMethods || [])
+        .filter((method) => isBolesaShippingCode(method.code));
     const paymentMethods =
-        paymentMethodsRes.data.eligiblePaymentMethods?.filter((m) => m.isEligible) || [];
+        paymentMethodsRes.data.eligiblePaymentMethods?.filter((method) => {
+            if (!method.isEligible) {
+                return false;
+            }
+            if (checkoutPolicy.codPaymentMethodCodes.includes(method.code)) {
+                return checkoutPolicy.codEnabled
+                    && activeOrder.subTotalWithTax >= checkoutPolicy.codMinimumMinor;
+            }
+            return true;
+        }) || [];
 
     return (
         <div className="container mx-auto px-4 py-8">

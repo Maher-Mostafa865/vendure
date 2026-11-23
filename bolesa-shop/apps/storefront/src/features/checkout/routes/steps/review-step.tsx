@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Loader2, MapPin, Truck, CreditCard, Edit, Mail } from 'lucide-react';
 import { useCheckout } from '../checkout-provider';
-import { bolesaChoicesFromMetadata, isBolesaShippingCode, selectedBolesaSlug } from '../bolesa-choices';
+import { isBolesaShippingCode } from '../bolesa-choices';
 import { placeOrder as placeOrderAction } from '../actions';
 import { plainText } from '../../plain-text';
 import { Price } from '@/features/pricing/price';
@@ -16,19 +16,14 @@ interface ReviewStepProps {
 
 export default function ReviewStep({ onEditStep }: ReviewStepProps) {
   const t = useTranslations('Checkout');
-  const { order, paymentMethods, selectedPaymentMethodCode, shippingMethods, isGuest } = useCheckout();
+  const { order, paymentMethods, selectedPaymentMethodCode, isGuest } = useCheckout();
   const deliveryName = (() => {
     const line = order.shippingLines?.[0];
     if (!line) {
       return null;
     }
-    const bolesa = shippingMethods.find((method) => isBolesaShippingCode(method.code));
-    if (bolesa && line.shippingMethod.id === bolesa.id) {
-      const slug = selectedBolesaSlug(bolesa.metadata);
-      const choice = bolesaChoicesFromMetadata(bolesa.metadata).find((option) => option.slug === slug);
-      if (choice) {
-        return choice.label ? `${choice.name} — ${choice.label}` : choice.name;
-      }
+    if (isBolesaShippingCode(line.shippingMethod.code)) {
+      return t('standardShipping');
     }
     return line.shippingMethod.name;
   })();

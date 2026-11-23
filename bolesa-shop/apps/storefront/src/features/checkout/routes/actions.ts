@@ -1,7 +1,9 @@
 'use server';
 
-import {mutate} from '@/platform/vendure/api';
-import {SetOrderShippingAddressMutation, SetOrderBillingAddressMutation, SetOrderShippingMethodMutation, AddPaymentToOrderMutation, TransitionOrderToStateMutation, SetCustomerForOrderMutation} from '@/features/checkout/graphql';
+import {mutate, query} from '@/platform/vendure/api';
+import {SetOrderShippingAddressMutation, SetOrderBillingAddressMutation, SetOrderShippingMethodMutation, AddPaymentToOrderMutation, TransitionOrderToStateMutation, SetCustomerForOrderMutation, GetEligibleShippingMethodsQuery} from '@/features/checkout/graphql';
+import {isBolesaShippingCode} from './bolesa-choices';
+import {getActiveCurrencyCode} from '@/features/currency/currency-server';
 import {CreateCustomerAddressMutation} from '@/features/account/graphql';
 import {revalidatePath, updateTag} from 'next/cache';
 import {redirect} from '@/platform/i18n/navigation';
@@ -178,6 +180,87 @@ export async function setShippingAddress(
 
     const locale = await getLocale();
     revalidatePath(`/${locale}/checkout`);
+}
+
+export type BolesaCheckoutPolicy = {
+    codEnabled: boolean;
+    codMinimumMinor: number;
+    codPaymentMethodCodes: string[];
+};
+
+const DEFAULT_CHECKOUT_POLICY: BolesaCheckoutPolicy = {
+    codEnabled: true,
+    codMinimumMinor: 100_000,
+    codPaymentMethodCodes: ['cashOndelivery-bolesa-egy', 'bolesa-cod'],
+};
+
+export async function getBolesaCheckoutPolicy(): Promise<BolesaCheckoutPolicy> {
+    try {
+        const data = await shopRawQuery<{
+            bolesaCheckoutPolicy: BolesaCheckoutPolicy;
+        }>(
+            `query BolesaCheckoutPolicy {
+                bolesaCheckoutPolicy {
+                    codEnabled
+                    codMinimumMinor
+                    codPaymentMethodCodes
+                }
+            }`,
+        );
+        const policy = data.bolesaCheckoutPolicy;
+        if (!policy || typeof policy.codMinimumMinor !== 'number' || !Array.isArray(policy.codPaymentMethodCodes)) {
+            return DEFAULT_CHECKOUT_POLICY;
+        }
+        return policy;
+    } catch (err) {
+        console.warn('bolesaCheckoutPolicy failed; using the default cash on delivery minimum', err);
+        return DEFAULT_CHECKOUT_POLICY;
+    }
+}
+
+export async function selectPaymentPreference(methodCode: string) {
+    const policy = await getBolesaCheckoutPolicy();
+    const preference = policy.codPaymentMethodCodes.includes(methodCode) ? 'cod' : 'prepaid';
+    const data = await shopRawQuery<{
+        setOrderCustomFields: { __typename: string; errorCode?: string; message?: string };
+    }>(
+        `mutation SelectPaymentPreference($input: UpdateOrderInput!) {
+            setOrderCustomFields(input: $input) {
+                __typename
+                ... on Order { id }
+                ... on ErrorResult { errorCode message }
+            }
+        }`,
+        { input: { customFields: { paymentPreference: preference } } },
+    );
+    if (data.setOrderCustomFields.__typename !== 'Order') {
+        throw new Error(data.setOrderCustomFields.message || 'Failed to save the payment method');
+    }
+    // Card and cash on delivery have different Partner prices. Re-quote now,
+    // after the preference is saved, so the order does not keep the previous price.
+    await applyQuotedShipping();
+    const locale = await getLocale();
+    revalidatePath(`/${locale}/checkout`);
+}
+
+async function applyQuotedShipping() {
+    const currencyCode = await getActiveCurrencyCode();
+    const methods = await query(
+        GetEligibleShippingMethodsQuery,
+        {},
+        {useAuthToken: true, currencyCode, fetch: {cache: 'no-store'}},
+    );
+    const method = (methods.data.eligibleShippingMethods ?? []).find((entry) =>
+        isBolesaShippingCode(entry.code),
+    );
+    const result = await mutate(
+        SetOrderShippingMethodMutation,
+        {shippingMethodId: method ? [method.id] : []},
+        {useAuthToken: true},
+    );
+    if (result.data.setOrderShippingMethod.__typename !== 'Order') {
+        throw new Error('Failed to update the shipping price');
+    }
 }
 
 export async function selectBolesaService(slug: string | null) {

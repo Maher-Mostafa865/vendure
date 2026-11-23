@@ -29,6 +29,9 @@ const connectionQuery = `
       autoCreateAwb
       defaultServiceSlug
       enabledServiceSlugs
+      serviceOffers { slug priority profitMinor }
+      accountServices { slug name }
+      serviceRates { slug currencyCode ccPriceMinor codPriceMinor quotedAt }
     }
   }
 `;
@@ -58,6 +61,26 @@ const settingsMutation = `
       autoCreateAwb
       defaultServiceSlug
       enabledServiceSlugs
+      serviceOffers { slug priority profitMinor }
+    }
+  }
+`;
+
+const carrierChoicesQuery = `
+  query BolesaOrderCarrierChoices($orderId: ID!) {
+    bolesaOrderCarrierChoices(orderId: $orderId) {
+      paymentPreference
+      selectedSlug
+      choices { slug name carrierPriceMinor profitMinor currencyCode }
+    }
+  }
+`;
+
+const setCarrierMutation = `
+  mutation SetBolesaCarrier($input: UpdateOrderInput!) {
+    setOrderCustomFields(input: $input) {
+      id
+      customFields { bolesaServiceSlug }
     }
   }
 `;
@@ -177,7 +200,7 @@ function BolesaConnectionPage() {
                 <StatusCard label="Token" value={`···· ${data.tokenLast4 || '—'}`} />
                 <StatusCard
                     label="Cash on delivery"
-                    value={data.codEnabled ? `On · ${data.codFeeMode}` : 'Off'}
+                    value={data.codEnabled ? 'On' : 'Off'}
                 />
                 <StatusCard label="Last verified" value={formatWhen(data.lastVerifiedAt)} />
             </div>
@@ -194,8 +217,8 @@ function BolesaConnectionPage() {
                 <MerchantSettings connection={data} />
             </div>
             <p className="text-xs text-muted-foreground">
-                Shipping prices are used only when the Partner currency matches this channel. Egypt uses EGP and
-                Saudi Arabia uses SAR. Prepaid is sent as cc. Cash on delivery sends the order total.
+                The customer sees one shipping price in this channel's currency. Card payment uses the card rate.
+                Cash on delivery uses the cash-on-delivery rate.
             </p>
         </PageShell>
     );
@@ -445,6 +468,37 @@ function Field({ label, className, children }: { label: string; className?: stri
     );
 }
 
+type OfferDraft = { priority: string; profit: string };
+
+function offersFromConnection(connection: any): Record<string, OfferDraft> {
+    const drafts: Record<string, OfferDraft> = {};
+    for (const offer of connection.serviceOffers ?? []) {
+        if (!offer?.slug) {
+            continue;
+        }
+        drafts[offer.slug] = {
+            priority: String(offer.priority ?? 100),
+            profit: offer.profitMinor ? (offer.profitMinor / 100).toString() : '',
+        };
+    }
+    return drafts;
+}
+
+function formatStoredRate(minor: number | null | undefined, currency: string): string {
+    if (minor == null) {
+        return '—';
+    }
+    return `${(minor / 100).toFixed(2)} ${currency}`;
+}
+
+function minorFromMajorInput(value: string): number {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+        return 0;
+    }
+    return Math.round(parsed * 100);
+}
+
 function MerchantSettings({ connection }: { connection: any }) {
     const qc = useQueryClient();
     const services = useQuery({
@@ -457,32 +511,39 @@ function MerchantSettings({ connection }: { connection: any }) {
         },
     });
     const [allowOpen, setAllowOpen] = useState(connection.allowOpen === true);
-    const [autoCreateAwb, setAutoCreateAwb] = useState(connection.autoCreateAwb === true);
     const [enabled, setEnabled] = useState<string[]>(connection.enabledServiceSlugs ?? []);
-    const [defaultSlug, setDefaultSlug] = useState<string>(connection.defaultServiceSlug ?? '');
+    const [offers, setOffers] = useState<Record<string, OfferDraft>>(() => offersFromConnection(connection));
     useEffect(() => {
         setAllowOpen(connection.allowOpen === true);
-        setAutoCreateAwb(connection.autoCreateAwb === true);
         setEnabled(connection.enabledServiceSlugs ?? []);
-        setDefaultSlug(connection.defaultServiceSlug ?? '');
+        setOffers(offersFromConnection(connection));
     }, [connection]);
     const save = useMutation({
         mutationFn: async () => {
             const d = await adminApi<{ updateBolesaConnection: any }>(settingsMutation, {
                 input: {
                     allowOpen,
-                    autoCreateAwb,
-                    defaultServiceSlug: defaultSlug || null,
+                    autoCreateAwb: false,
                     enabledServiceSlugs: enabled,
+                    serviceOffers: enabled.map(slug => {
+                        const priority = Number(offers[slug]?.priority);
+                        return {
+                            slug,
+                            priority: Number.isFinite(priority) ? Math.trunc(priority) : 100,
+                            profitMinor: minorFromMajorInput(offers[slug]?.profit ?? ''),
+                        };
+                    }),
                 },
             });
             return d.updateBolesaConnection;
         },
         onSuccess: () => qc.invalidateQueries({ queryKey: ['bolesaConnection'] }),
     });
-    const catalog = services.data ?? [];
-    const choices = enabled.length ? catalog.filter(row => enabled.includes(row.slug)) : catalog;
-    const needsDefault = autoCreateAwb && !defaultSlug;
+    const savedCatalog = connection.accountServices ?? [];
+    const catalog = (services.data?.length ? services.data : savedCatalog) as Array<{ slug: string; name: string }>;
+    const rates = new Map<string, { currencyCode: string; ccPriceMinor: number | null; codPriceMinor: number | null }>(
+        (connection.serviceRates ?? []).map((rate: { slug: string; currencyCode: string; ccPriceMinor: number | null; codPriceMinor: number | null }) => [rate.slug, rate]),
+    );
     const allSelected = catalog.length > 0 && catalog.every(row => enabled.includes(row.slug));
     function selectAll() {
         setEnabled(catalog.map(row => row.slug));
@@ -491,13 +552,19 @@ function MerchantSettings({ connection }: { connection: any }) {
         setEnabled([]);
     }
     function toggle(slug: string) {
-        setEnabled(current => {
-            const next = current.includes(slug) ? current.filter(item => item !== slug) : [...current, slug];
-            if (defaultSlug && !next.includes(defaultSlug)) {
-                setDefaultSlug('');
-            }
-            return next;
-        });
+        setEnabled(current =>
+            current.includes(slug) ? current.filter(item => item !== slug) : [...current, slug],
+        );
+    }
+    function setOffer(slug: string, field: keyof OfferDraft, value: string) {
+        setOffers(current => ({
+            ...current,
+            [slug]: {
+                priority: current[slug]?.priority ?? '100',
+                profit: current[slug]?.profit ?? '',
+                [field]: value,
+            },
+        }));
     }
     return (
         <form
@@ -510,7 +577,7 @@ function MerchantSettings({ connection }: { connection: any }) {
             <div>
                 <h3 className="font-medium">Shipment settings</h3>
                 <p className="mt-1 text-xs text-muted-foreground">
-                    Leave every service unchecked to offer all priced services.
+                    Customers see one shipping price. They do not see the carrier. You choose the carrier when you create the AWB.
                 </p>
             </div>
             <div className="space-y-2">
@@ -523,18 +590,14 @@ function MerchantSettings({ connection }: { connection: any }) {
                         Bosta services need a public product photo. Without it, the shipment is not booked.
                     </p>
                 )}
-                <label className="flex items-start gap-3 rounded-md border px-3 py-2 text-sm">
-                    <input className="mt-0.5" type="checkbox" checked={autoCreateAwb} onChange={event => setAutoCreateAwb(event.target.checked)} />
-                    <span>Create the Bolesa fulfillment automatically after payment</span>
-                </label>
             </div>
             <div className="space-y-2">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                     <p className="text-sm text-muted-foreground">
-                        Services customers can choose
+                        Services that can supply the shipping price
                         {catalog.length > 0 && (
                             <span className="ml-2 text-xs">
-                                {enabled.length ? `${enabled.length} of ${catalog.length}` : 'All priced services'}
+                                {enabled.length} of {catalog.length}
                             </span>
                         )}
                     </p>
@@ -549,44 +612,68 @@ function MerchantSettings({ connection }: { connection: any }) {
                         </div>
                     )}
                 </div>
-                {services.isLoading && <p className="text-sm text-muted-foreground">Loading services…</p>}
+                {services.isLoading && !catalog.length && <p className="text-sm text-muted-foreground">Loading services…</p>}
                 {services.error && <p className="text-sm text-destructive">{(services.error as Error).message}</p>}
                 {!services.isLoading && !catalog.length && (
                     <p className="text-sm text-muted-foreground">No services returned for this account.</p>
                 )}
                 {catalog.length > 0 && (
-                    <div className="max-h-64 space-y-1 overflow-y-auto rounded-md border p-2">
-                        {catalog.map(row => (
-                            <label key={row.slug} className="flex items-center gap-3 rounded-md px-2 py-1.5 text-sm hover:bg-muted">
-                                <input type="checkbox" checked={enabled.includes(row.slug)} onChange={() => toggle(row.slug)} />
-                                <span className="min-w-0">
-                                    <span className="block">{row.name}</span>
-                                    <span className="block truncate text-xs text-muted-foreground">{row.slug}</span>
-                                </span>
-                            </label>
-                        ))}
+                    <div className="space-y-2">
+                        {catalog.map(row => {
+                            const checked = enabled.includes(row.slug);
+                            const offer = offers[row.slug];
+                            const rate = rates.get(row.slug);
+                            return (
+                                <div key={row.slug} className="rounded-md border p-3">
+                                    <label className="flex items-center gap-3 text-sm">
+                                        <input type="checkbox" checked={checked} onChange={() => toggle(row.slug)} />
+                                        <span className="min-w-0">
+                                            <span className="block">{row.name}</span>
+                                            <span className="block truncate text-xs text-muted-foreground">{row.slug}</span>
+                                        </span>
+                                    </label>
+                                    {rate && (
+                                        <p className="mt-2 text-xs text-muted-foreground">
+                                            Last card rate {formatStoredRate(rate.ccPriceMinor, rate.currencyCode)}
+                                            {' · '}
+                                            Last cash rate {formatStoredRate(rate.codPriceMinor, rate.currencyCode)}
+                                        </p>
+                                    )}
+                                    {checked && (
+                                        <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                                            <Field label="Priority">
+                                                <input
+                                                    className={fieldClass}
+                                                    inputMode="numeric"
+                                                    value={offer?.priority ?? '100'}
+                                                    onChange={event => setOffer(row.slug, 'priority', event.target.value)}
+                                                />
+                                            </Field>
+                                            <Field label="Profit">
+                                                <input
+                                                    className={fieldClass}
+                                                    inputMode="decimal"
+                                                    value={offer?.profit ?? ''}
+                                                    onChange={event => setOffer(row.slug, 'profit', event.target.value)}
+                                                />
+                                            </Field>
+                                        </div>
+                                    )}
+                                </div>
+                            );
+                        })}
                     </div>
                 )}
-            </div>
-            <Field label="Default service">
-                <select className={fieldClass} value={defaultSlug} onChange={event => setDefaultSlug(event.target.value)}>
-                    <option value="">None</option>
-                    {choices.map(row => (
-                        <option key={row.slug} value={row.slug}>{row.name}</option>
-                    ))}
-                </select>
-            </Field>
-            {needsDefault && (
-                <p className="text-sm text-destructive">
-                    Automatic creation needs a default service for customers who do not pick one.
+                <p className="text-xs text-muted-foreground">
+                    Lower priority is used first. The customer pays the live carrier rate plus this profit. Each carrier response is saved here as the last card and cash rates. Checkout still requests a new price.
                 </p>
-            )}
+            </div>
             <div className="flex items-center justify-between gap-3">
                 <div className="text-sm">
                     {save.error && <p className="text-destructive">{(save.error as Error).message}</p>}
                     {save.isSuccess && <p>Settings saved.</p>}
                 </div>
-                <Button type="submit" disabled={save.isPending || needsDefault}>
+                <Button type="submit" disabled={save.isPending}>
                     {save.isPending ? 'Saving…' : 'Save settings'}
                 </Button>
             </div>
@@ -601,6 +688,88 @@ const WIZARD_STEPS = [
     { id: 'shipment', title: 'Shipment info' },
 ] as const;
 
+function carrierChoiceLabel(choice: {
+    name: string;
+    carrierPriceMinor: number;
+    profitMinor: number;
+    currencyCode: string;
+}): string {
+    const carrier = formatStoredRate(choice.carrierPriceMinor, choice.currencyCode);
+    if (!choice.profitMinor) {
+        return `${choice.name} — ${carrier}`;
+    }
+    return `${choice.name} — ${carrier} + profit ${formatStoredRate(choice.profitMinor, choice.currencyCode)}`;
+}
+
+function CarrierChoice({ order }: { order: any }) {
+    const choices = useQuery({
+        queryKey: ['bolesaOrderCarrierChoices', order?.id],
+        enabled: Boolean(order?.id),
+        queryFn: async () => {
+            const data = await adminApi<{
+                bolesaOrderCarrierChoices: {
+                    paymentPreference: string;
+                    selectedSlug: string;
+                    choices: Array<{
+                        slug: string;
+                        name: string;
+                        carrierPriceMinor: number;
+                        profitMinor: number;
+                        currencyCode: string;
+                    }>;
+                };
+            }>(carrierChoicesQuery, { orderId: order.id });
+            return data.bolesaOrderCarrierChoices;
+        },
+    });
+    const [slug, setSlug] = useState('');
+    useEffect(() => {
+        if (choices.data?.selectedSlug) {
+            setSlug(choices.data.selectedSlug);
+        }
+    }, [choices.data?.selectedSlug]);
+    const save = useMutation({
+        mutationFn: async () => {
+            const data = await adminApi<{ setOrderCustomFields: { id: string } }>(setCarrierMutation, {
+                input: { id: order.id, customFields: { bolesaServiceSlug: slug } },
+            });
+            return data.setOrderCustomFields;
+        },
+    });
+    const paymentLabel = choices.data?.paymentPreference === 'cod' ? 'cash on delivery' : 'card';
+    const rows = choices.data?.choices ?? [];
+    return (
+        <div className="space-y-2 rounded-md border p-3">
+            <div className="font-medium">Carrier</div>
+            <p className="text-xs text-muted-foreground">
+                Prices come from the carrier for {paymentLabel}, plus the profit saved in Bolesa Connection.
+                The customer was already charged for shipping. This choice only selects who creates the AWB.
+            </p>
+            {choices.isLoading && <p className="text-sm text-muted-foreground">Loading carrier prices…</p>}
+            {choices.error && <p className="text-sm text-destructive">{(choices.error as Error).message}</p>}
+            {!choices.isLoading && !choices.error && rows.length === 0 && (
+                <p className="text-sm text-muted-foreground">No carrier returned a price for this order.</p>
+            )}
+            <div className="flex flex-wrap items-end gap-2">
+                <label className="min-w-56 flex-1 space-y-1 text-sm">
+                    <span className="text-muted-foreground">Service</span>
+                    <select className={fieldClass} value={slug} onChange={event => setSlug(event.target.value)}>
+                        <option value="">Choose a carrier</option>
+                        {rows.map(row => (
+                            <option key={row.slug} value={row.slug}>{carrierChoiceLabel(row)}</option>
+                        ))}
+                    </select>
+                </label>
+                <Button type="button" disabled={!slug || save.isPending} onClick={() => save.mutate()}>
+                    {save.isPending ? 'Saving…' : 'Save carrier'}
+                </Button>
+            </div>
+            {save.error && <p className="text-sm text-destructive">{(save.error as Error).message}</p>}
+            {save.isSuccess && <p className="text-sm">Carrier saved. Create the fulfillment to send the AWB.</p>}
+        </div>
+    );
+}
+
 function BolesaShipmentBlock({ context }: { context: { entity?: any } }) {
     const order = context.entity;
     const fulfillments = order?.fulfillments ?? [];
@@ -610,14 +779,18 @@ function BolesaShipmentBlock({ context }: { context: { entity?: any } }) {
             f.method === 'Bolesa' ||
             f.customFields?.bolesaSyncStatus != null,
     );
-    if (!bolesa.length) {
-        return <div className="text-sm text-muted-foreground">No Bolesa fulfillments on this order.</div>;
-    }
     return (
         <div className="space-y-4">
-            {bolesa.map((f: any) => (
-                <ShipmentCard key={f.id} order={order} fulfillmentId={f.id} trackingCode={f.trackingCode} />
-            ))}
+            <CarrierChoice order={order} />
+            {bolesa.length === 0 ? (
+                <div className="text-sm text-muted-foreground">
+                    Payment does not create a shipment. Choose a carrier, then create the fulfillment.
+                </div>
+            ) : (
+                bolesa.map((f: any) => (
+                    <ShipmentCard key={f.id} order={order} fulfillmentId={f.id} trackingCode={f.trackingCode} />
+                ))
+            )}
         </div>
     );
 }

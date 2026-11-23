@@ -8,11 +8,32 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/component
 import { Separator } from '@/components/ui/separator';
 import { OrderLine } from './types';
 import { useCheckout } from './checkout-provider';
+import { isBolesaShippingCode } from './bolesa-choices';
 import { Price } from '@/features/pricing/price';
 import { VariantChoice } from '@/features/products/variant-choice';
 import {useTranslations} from 'next-intl';
 
-function OrderSummaryContent({ order, t }: { order: ReturnType<typeof useCheckout>['order']; t: ReturnType<typeof useTranslations<'Checkout'>> }) {
+function quotedCheckoutTotal(
+  order: ReturnType<typeof useCheckout>['order'],
+  shippingMethods: ReturnType<typeof useCheckout>['shippingMethods'],
+) {
+  const applied = (order.shippingLines?.length ?? 0) > 0;
+  const quoted = shippingMethods.find((method) => isBolesaShippingCode(method.code))?.priceWithTax;
+  const shipping = applied ? order.shippingWithTax : quoted;
+  const total = applied || shipping == null ? order.totalWithTax : order.totalWithTax + shipping;
+  return { shipping, total };
+}
+
+function OrderSummaryContent({
+  order,
+  shippingMethods,
+  t,
+}: {
+  order: ReturnType<typeof useCheckout>['order'];
+  shippingMethods: ReturnType<typeof useCheckout>['shippingMethods'];
+  t: ReturnType<typeof useTranslations<'Checkout'>>;
+}) {
+  const { shipping, total } = quotedCheckoutTotal(order, shippingMethods);
   return (
     <div className="space-y-4">
       <div className="space-y-3">
@@ -80,8 +101,8 @@ function OrderSummaryContent({ order, t }: { order: ReturnType<typeof useCheckou
         <div className="flex justify-between text-sm">
           <span className="text-muted-foreground">{t('shipping')}</span>
           <span>
-            {order.shippingWithTax > 0
-              ? <Price value={order.shippingWithTax} currencyCode={order.currencyCode} />
+            {shipping != null
+              ? <Price value={shipping} currencyCode={order.currencyCode} />
               : t('toBeCalculated')}
           </span>
         </div>
@@ -92,7 +113,7 @@ function OrderSummaryContent({ order, t }: { order: ReturnType<typeof useCheckou
       <div className="flex justify-between font-bold text-lg">
         <span>{t('total')}</span>
         <span>
-          <Price value={order.totalWithTax} currencyCode={order.currencyCode} />
+          <Price value={total} currencyCode={order.currencyCode} />
         </span>
       </div>
     </div>
@@ -101,7 +122,8 @@ function OrderSummaryContent({ order, t }: { order: ReturnType<typeof useCheckou
 
 export default function OrderSummary() {
   const t = useTranslations('Checkout');
-  const { order } = useCheckout();
+  const { order, shippingMethods } = useCheckout();
+  const { total } = quotedCheckoutTotal(order, shippingMethods);
   const [isOpen, setIsOpen] = useState(false);
 
   return (
@@ -119,7 +141,7 @@ export default function OrderSummary() {
                   </CardTitle>
                   <div className="flex items-center gap-2">
                     <span className="font-bold text-lg">
-                      <Price value={order.totalWithTax} currencyCode={order.currencyCode} />
+                      <Price value={total} currencyCode={order.currencyCode} />
                     </span>
                     <ChevronDown className={`h-5 w-5 text-muted-foreground transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`} />
                   </div>
@@ -128,7 +150,7 @@ export default function OrderSummary() {
             </CollapsibleTrigger>
             <CollapsibleContent>
               <CardContent>
-                <OrderSummaryContent order={order} t={t} />
+                <OrderSummaryContent order={order} shippingMethods={shippingMethods} t={t} />
               </CardContent>
             </CollapsibleContent>
           </Collapsible>
@@ -142,7 +164,7 @@ export default function OrderSummary() {
             <CardTitle>{t('orderSummary')}</CardTitle>
           </CardHeader>
           <CardContent>
-            <OrderSummaryContent order={order} t={t} />
+            <OrderSummaryContent order={order} shippingMethods={shippingMethods} t={t} />
           </CardContent>
         </Card>
       </div>

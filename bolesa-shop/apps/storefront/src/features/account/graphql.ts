@@ -127,6 +127,7 @@ export const GetOrderDetailQuery = graphql(`
                 shippingMethod {
                     id
                     name
+                    code
                     description
                 }
                 priceWithTax

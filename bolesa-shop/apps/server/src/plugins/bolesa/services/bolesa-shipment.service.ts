@@ -9,7 +9,6 @@ import {
     FulfillmentLine,
     HistoryService,
     ID,
-    isGraphQlErrorResult,
     JobQueue,
     JobQueueService,
     Logger,
@@ -28,7 +27,6 @@ import { In, LessThan } from 'typeorm';
 import {
     BOLESA_COD_HANDLER_CODE,
     BOLESA_FULFILLMENT_HANDLER_CODE,
-    BOLESA_SHIPPING_CALCULATOR_CODE,
     BOLESA_PLUGIN_OPTIONS,
     CANCEL_AWB_QUEUE,
     CREATE_AWB_QUEUE,
@@ -42,13 +40,13 @@ import {
     CancelAwbJobData,
     CreateAwbJobData,
     PaymentPreference,
-    PersistedBolesaQuote,
 } from '../types';
 import { decideCreateAwbGate, isValidPersistedOrderId } from '../util/create-awb-gate';
 import { minorToMajor } from '../util/money';
-import { awbPaymentType, PaymentFact, shouldAutoFulfill } from '../util/payment-kind';
+import { awbPaymentType, PaymentFact } from '../util/payment-kind';
 import { buildAwbShipmentContent } from '../util/awb-content';
 import { merchantServiceSlugs, openShipmentImageError, resolveAwbServiceSlug } from '../util/merchant-services';
+import { chargedShippingQuote, normalizeServiceOffers, quoteCustomerShipping } from '../util/service-offer';
 import { partnerAddressLine } from '../util/partner-address-line';
 import {
     BolesaOpsSnapshot,
@@ -692,40 +690,50 @@ export class BolesaShipmentService implements OnModuleInit {
             return;
         }
         const preference = ((order as any).customFields?.paymentPreference ?? 'prepaid') as PaymentPreference;
-        const services = await this.rateService.getOptionsForOrder(ctx, order, preference);
-        const conn = await this.connectionService.requireActive(ctx);
-        const methodSlug = (order.shippingLines?.[0] as any)?.shippingMethod?.calculator?.args?.find(
-            (a: any) => a.name === 'carrierServiceSlug',
-        )?.value as string | undefined;
-        const chosen = resolveAwbServiceSlug({
-            customerSlug: (order as any).customFields?.bolesaServiceSlug,
-            defaultSlug: conn.defaultServiceSlug,
-            quoteSlug: methodSlug,
-            enabledSlugs: merchantServiceSlugs(conn.enabledServiceSlugs),
-        });
-        if ('error' in chosen) {
-            return;
+        const chargedMinor = order.shippingLines?.[0]?.priceWithTax;
+        let quoteBody: Record<string, unknown> | undefined;
+        try {
+            const services = await this.rateService.getOptionsForOrder(ctx, order, preference);
+            const conn = await this.connectionService.requireActive(ctx);
+            const quoted = quoteCustomerShipping({
+                services,
+                enabledSlugs: merchantServiceSlugs(conn.enabledServiceSlugs),
+                offers: normalizeServiceOffers(conn.serviceOffers),
+                preference,
+                currencyCode: ctx.channel.defaultCurrencyCode,
+            });
+            if (quoted) {
+                const option = services.find(service => service.slug === quoted.slug);
+                const frozen = chargedShippingQuote({ quoted, chargedMinor });
+                quoteBody = {
+                    ...frozen,
+                    carrierName: option?.carrierName,
+                    paymentPreference: preference,
+                    capturedAt: new Date().toISOString(),
+                };
+            }
+        } catch (err: any) {
+            Logger.warn(
+                `Order ${order.code} shipping quote was not refreshed: ${err?.message}`,
+                loggerCtx,
+            );
         }
-        const enabled = merchantServiceSlugs(conn.enabledServiceSlugs);
-        const offered = enabled.length ? services.filter(service => enabled.includes(service.slug)) : services;
-        const option = offered.find(service => service.slug === chosen.slug);
-        if (!option) {
-            return;
+        if (!quoteBody && typeof chargedMinor === 'number') {
+            quoteBody = {
+                serviceSlug: '',
+                priceMinor: chargedMinor,
+                currencyCode: order.currencyCode,
+                paymentPreference: preference,
+                capturedAt: new Date().toISOString(),
+            };
         }
-        const built = this.rateService.buildQuote(
-            option,
-            preference,
-            conn.markupPercent ?? 0,
-            conn.codFeeMode ?? 'absorb',
-            ctx.channel.defaultCurrencyCode,
-        );
-        if (!built) {
+        if (!quoteBody) {
             return;
         }
         await this.connection.getRepository(ctx, Order).update(order.id, {
             customFields: {
                 ...(order.customFields as any),
-                bolesaQuote: JSON.stringify(built.quote),
+                bolesaQuote: JSON.stringify(quoteBody),
             },
         } as any);
     }
@@ -1716,17 +1724,12 @@ export class BolesaShipmentService implements OnModuleInit {
         paymentType: 'cc' | 'cod',
     ): { input: BolesaCreateAwbInput } | { error: string } {
         const preference = paymentType;
-        let quote: PersistedBolesaQuote | null = null;
-        try {
-            const raw = (order as any).customFields?.bolesaQuote;
-            quote = raw ? (typeof raw === 'string' ? JSON.parse(raw) : raw) : null;
-        } catch {
-            quote = null;
+        const adminSlug = String((order as any).customFields?.bolesaServiceSlug ?? '').trim();
+        if (!adminSlug || adminSlug === 'auto' || adminSlug === 'default') {
+            return { error: 'Choose a carrier on this order before creating the AWB.' };
         }
         const chosen = resolveAwbServiceSlug({
-            customerSlug: (order as any).customFields?.bolesaServiceSlug,
-            quoteSlug: quote?.serviceSlug,
-            defaultSlug: conn.defaultServiceSlug,
+            customerSlug: adminSlug,
             enabledSlugs: merchantServiceSlugs(conn.enabledServiceSlugs),
         });
         if ('error' in chosen) {
@@ -1801,74 +1804,10 @@ export class BolesaShipmentService implements OnModuleInit {
     }
 
     /**
-     * Automatic mode creates the Vendure fulfillment after the order is allowed to ship.
-     * Prepaid waits for PaymentSettled. COD (bolesa-cod stays Authorized until delivery)
-     * starts at PaymentAuthorized. Partner HTTP stays on the fulfillment outbox, after commit.
+     * Payment does not create a shipment. The admin chooses the carrier and creates the AWB.
      */
-    private async maybeAutoFulfill(event: OrderStateTransitionEvent): Promise<void> {
-        if (event.toState !== 'PaymentAuthorized' && event.toState !== 'PaymentSettled') {
-            return;
-        }
-        const conn = await this.connectionService.getForChannel(event.ctx);
-        if (!conn?.isActive || conn.autoCreateAwb !== true) {
-            return;
-        }
-        const order = await this.orderService.findOne(event.ctx, event.order.id, [
-            'lines',
-            'payments',
-            'shippingLines',
-            'shippingLines.shippingMethod',
-            'fulfillments',
-        ]);
-        if (!order || order.state === 'Cancelled' || !order.lines?.length) {
-            return;
-        }
-        const method = order.shippingLines?.[0]?.shippingMethod as
-            | { calculator?: { code?: string }; fulfillmentHandlerCode?: string }
-            | undefined;
-        const isBolesa =
-            method?.calculator?.code === BOLESA_SHIPPING_CALCULATOR_CODE ||
-            method?.fulfillmentHandlerCode === BOLESA_FULFILLMENT_HANDLER_CODE;
-        if (!isBolesa) {
-            return;
-        }
-        const hasBolesaFulfillment = (order.fulfillments ?? []).some(
-            fulfillment =>
-                (fulfillment as any).handlerCode === BOLESA_FULFILLMENT_HANDLER_CODE ||
-                fulfillment.method === 'Bolesa',
-        );
-        const ready = shouldAutoFulfill({
-            toState: event.toState,
-            payments: await this.paymentFacts(event.ctx, order),
-            hasBolesaFulfillment,
-        });
-        if (!ready) {
-            return;
-        }
-        const chosen = resolveAwbServiceSlug({
-            customerSlug: (order as any).customFields?.bolesaServiceSlug,
-            defaultSlug: conn.defaultServiceSlug,
-            enabledSlugs: merchantServiceSlugs(conn.enabledServiceSlugs),
-        });
-        if ('error' in chosen) {
-            await this.note(event.ctx, order.id, chosen.error);
-            return;
-        }
-        if ((order as any).customFields?.bolesaServiceSlug !== chosen.slug) {
-            await this.orderService.updateCustomFields(event.ctx, order.id, {
-                bolesaServiceSlug: chosen.slug,
-            });
-        }
-        const result = await this.orderService.createFulfillment(event.ctx, {
-            lines: order.lines.map(line => ({ orderLineId: line.id, quantity: line.quantity })),
-            handler: { code: BOLESA_FULFILLMENT_HANDLER_CODE, arguments: [] },
-        });
-        if (isGraphQlErrorResult(result)) {
-            const detail =
-                (result as { fulfillmentHandlerError?: string; message?: string }).fulfillmentHandlerError ||
-                result.message;
-            await this.note(event.ctx, order.id, `Automatic Bolesa fulfillment was not created: ${detail}`);
-        }
+    private async maybeAutoFulfill(_event: OrderStateTransitionEvent): Promise<void> {
+        return;
     }
 
     /** Handler code from the channel's PaymentMethod. Client metadata is ignored. */
@@ -1934,25 +1873,31 @@ export class BolesaShipmentService implements OnModuleInit {
 
     private async settleCodPaymentIfNeeded(ctx: RequestContext, orderId: ID) {
         const order = await this.orderService.findOne(ctx, orderId, ['payments']);
-        if (!order?.payments) {
-            return;
-        }
-        for (const payment of order.payments) {
-            if (this.isBolesaCodPayment(payment) && payment.state === 'Authorized') {
-                await this.orderService.settlePayment(ctx, payment.id);
-            }
+        for (const payment of await this.authorizedCodPayments(ctx, order)) {
+            await this.orderService.settlePayment(ctx, payment.id);
         }
     }
 
     private async cancelCodPaymentIfNeeded(ctx: RequestContext, orderId: ID) {
         const order = await this.orderService.findOne(ctx, orderId, ['payments']);
-        if (!order?.payments) {
-            return;
+        for (const payment of await this.authorizedCodPayments(ctx, order)) {
+            await this.orderService.cancelPayment(ctx, payment.id);
         }
-        for (const payment of order.payments) {
-            if (this.isBolesaCodPayment(payment) && payment.state === 'Authorized') {
-                await this.orderService.cancelPayment(ctx, payment.id);
-            }
+    }
+
+    /** COD is the payment method whose handler is bolesa-cod, not a particular method code. */
+    private async authorizedCodPayments(ctx: RequestContext, order: Order | undefined) {
+        if (!order?.payments?.length) {
+            return [];
         }
+        const facts = await this.paymentFacts(ctx, order);
+        const codCodes = new Set(
+            facts.filter(fact => fact.handlerCode === BOLESA_COD_HANDLER_CODE).map(fact => fact.methodCode),
+        );
+        return order.payments.filter(
+            payment =>
+                payment.state === 'Authorized' &&
+                (codCodes.has(payment.method) || this.isBolesaCodPayment(payment)),
+        );
     }
 }

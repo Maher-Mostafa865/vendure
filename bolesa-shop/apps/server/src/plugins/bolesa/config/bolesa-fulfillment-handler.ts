@@ -21,7 +21,11 @@ export const bolesaFulfillmentHandler = new FulfillmentHandler({
     description: [
         {
             languageCode: LanguageCode.en,
-            value: 'Bolesa AWB (async outbox — no HTTP inside the DB transaction)',
+            value: 'Create the Bolesa shipment when you fulfill the order. Payment does not create it.',
+        },
+        {
+            languageCode: LanguageCode.ar,
+            value: 'إنشاء شحنة Bolesa عند تنفيذ الطلب. الدفع لا ينشئ الشحنة.',
         },
     ],
     args: {},
@@ -44,6 +48,11 @@ export const bolesaFulfillmentHandler = new FulfillmentHandler({
             throw new UserInputError(`Order ${orderRef.id} has no lines available for fulfillment`);
         }
         await connectionService.requireActive(ctx);
+
+        const carrier = String((order as any).customFields?.bolesaServiceSlug ?? '').trim();
+        if (!carrier || carrier === 'auto' || carrier === 'default') {
+            throw new UserInputError('Choose a carrier on this order before creating the fulfillment.');
+        }
 
         const hash = (order.shippingAddress as any)?.customFields?.bolesaCityHash;
         if (!hash) {

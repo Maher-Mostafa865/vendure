@@ -1,11 +1,14 @@
 'use client';
 
+import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Label } from '@/components/ui/label';
 import { Card } from '@/components/ui/card';
-import { CreditCard } from 'lucide-react';
+import { CreditCard, Loader2 } from 'lucide-react';
+import { useRouter } from '@/platform/i18n/navigation';
 import { useCheckout } from '../checkout-provider';
+import { selectPaymentPreference } from '../actions';
 import { plainText } from '../../plain-text';
 import {useTranslations} from 'next-intl';
 
@@ -15,11 +18,22 @@ interface PaymentStepProps {
 
 export default function PaymentStep({ onComplete }: PaymentStepProps) {
   const t = useTranslations('Checkout');
+  const router = useRouter();
   const { paymentMethods, selectedPaymentMethodCode, setSelectedPaymentMethodCode } = useCheckout();
+  const [submitting, setSubmitting] = useState(false);
 
-  const handleContinue = () => {
+  const handleContinue = async () => {
     if (!selectedPaymentMethodCode) return;
-    onComplete();
+    setSubmitting(true);
+    try {
+      await selectPaymentPreference(selectedPaymentMethodCode);
+      await router.refresh();
+      onComplete();
+    } catch (error) {
+      console.error('Error saving payment method:', error);
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   if (paymentMethods.length === 0) {
@@ -55,10 +69,11 @@ export default function PaymentStep({ onComplete }: PaymentStepProps) {
 
       <Button
         onClick={handleContinue}
-        disabled={!selectedPaymentMethodCode}
+        disabled={!selectedPaymentMethodCode || submitting}
         className="w-full"
       >
-        {t('continueToReview')}
+        {submitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+        {t('continueToShipping')}
       </Button>
     </div>
   );

@@ -9,6 +9,10 @@ export const adminApiExtensions = gql`
         shipperAddress: JSON
         defaultServiceSlug: String
         enabledServiceSlugs: [String!]!
+        serviceOffers: [BolesaServiceOffer!]!
+        accountServices: [BolesaAccountService!]!
+        serviceRates: [BolesaServiceRate!]!
+        codMinimumMajor: Float!
         allowOpen: Boolean!
         autoCreateAwb: Boolean!
         shipmentCategory: String!
@@ -21,10 +25,45 @@ export const adminApiExtensions = gql`
         labelNote: String!
     }
 
+    type BolesaServiceOffer {
+        slug: String!
+        priority: Int!
+        profitMinor: Int!
+    }
+
+    input BolesaServiceOfferInput {
+        slug: String!
+        priority: Int!
+        profitMinor: Int!
+    }
+
+    type BolesaCarrierChoice {
+        slug: String!
+        name: String!
+        carrierPriceMinor: Int!
+        profitMinor: Int!
+        currencyCode: String!
+    }
+
+    type BolesaOrderCarrierChoices {
+        paymentPreference: String!
+        selectedSlug: String!
+        choices: [BolesaCarrierChoice!]!
+    }
+
     type BolesaAccountService {
         slug: String!
         name: String!
         logoUrl: String
+    }
+
+    """Last finite price returned by the carrier. Not the checkout price."""
+    type BolesaServiceRate {
+        slug: String!
+        currencyCode: String!
+        ccPriceMinor: Int
+        codPriceMinor: Int
+        quotedAt: String!
     }
 
     type BolesaConnectionTestResult {
@@ -93,6 +132,8 @@ export const adminApiExtensions = gql`
         shipperAddress: JSON
         defaultServiceSlug: String
         enabledServiceSlugs: [String!]
+        serviceOffers: [BolesaServiceOfferInput!]
+        codMinimumMajor: Float
         allowOpen: Boolean
         autoCreateAwb: Boolean
         shipmentCategory: String
@@ -107,6 +148,8 @@ export const adminApiExtensions = gql`
         bolesaConnection: BolesaConnection
         """Services enabled on the Partner account. Prices here are not checkout prices."""
         bolesaAccountServices: [BolesaAccountService!]!
+        """Carriers returned by services/options for this order, with the saved profit."""
+        bolesaOrderCarrierChoices(orderId: ID!): BolesaOrderCarrierChoices!
         bolesaShipments(syncStatus: String, take: Int, skip: Int): BolesaShipmentList!
         bolesaShipment(fulfillmentId: ID!): BolesaShipment
         bolesaOpsHealth: BolesaOpsHealth!
@@ -131,7 +174,16 @@ export const shopApiExtensions = gql`
         district: String
     }
 
+    type BolesaCheckoutPolicy {
+        codEnabled: Boolean!
+        """Goods total, in minor units, from the payment method eligibility checker."""
+        codMinimumMinor: Int!
+        """Payment method codes whose handler is bolesa-cod for this channel."""
+        codPaymentMethodCodes: [String!]!
+    }
+
     extend type Query {
         bolesaSearchCities(query: String!): [BolesaCity!]!
+        bolesaCheckoutPolicy: BolesaCheckoutPolicy!
     }
 `;

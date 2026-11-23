@@ -266,6 +266,7 @@ export async function seedFullE2eCatalog(
             address_line: '12 Test Street Nasr City Cairo EG',
         },
         defaultServiceSlug: SERVICE_SLUG,
+        enabledServiceSlugs: [SERVICE_SLUG],
         shipmentCategory: 'dry',
         codEnabled: true,
         codFeeMode: 'absorb',
@@ -377,10 +378,7 @@ export async function seedFullE2eCatalog(
             checker: { code: BOLESA_ELIGIBILITY_CHECKER_CODE, arguments: [] },
             calculator: {
                 code: BOLESA_SHIPPING_CALCULATOR_CODE,
-                arguments: [
-                    { name: 'carrierServiceSlug', value: SERVICE_SLUG },
-                    { name: 'flatRateFallbackMinor', value: '0' },
-                ],
+                arguments: [],
             },
             translations: [
                 {

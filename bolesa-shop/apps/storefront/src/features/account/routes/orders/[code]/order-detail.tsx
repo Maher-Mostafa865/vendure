@@ -15,6 +15,7 @@ import {useLocale, useTranslations} from 'next-intl';
 import type {ResultOf} from '@/platform/vendure/graphql';
 import type {GetOrderDetailQuery} from '@/features/account/graphql';
 import {VariantChoice} from '@/features/products/variant-choice';
+import {isBolesaShippingCode} from '@/features/checkout/routes/bolesa-choices';
 
 type OrderByCode = NonNullable<ResultOf<typeof GetOrderDetailQuery>['orderByCode']>;
 type OrderLineItem = OrderByCode['lines'][number];
@@ -30,6 +31,7 @@ export function OrderDetail({orderPromise}: OrderDetailProps) {
     const {data} = use(orderPromise);
     const locale = useLocale();
     const t = useTranslations('Account');
+    const checkout = useTranslations('Checkout');
     const order = data.orderByCode;
 
     if (!order) {
@@ -203,8 +205,12 @@ export function OrderDetail({orderPromise}: OrderDetailProps) {
                             <CardContent>
                                 {order.shippingLines.map((line: OrderShippingLine, idx: number) => (
                                     <div key={idx} className="space-y-1 text-sm">
-                                        <p className="font-medium">{line.shippingMethod.name}</p>
-                                        {line.shippingMethod.description && (
+                                        <p className="font-medium">
+                                            {isBolesaShippingCode(line.shippingMethod.code)
+                                                ? checkout('standardShipping')
+                                                : line.shippingMethod.name}
+                                        </p>
+                                        {!isBolesaShippingCode(line.shippingMethod.code) && line.shippingMethod.description && (
                                             <p className="text-muted-foreground">{line.shippingMethod.description}</p>
                                         )}
                                         <p className="font-medium">

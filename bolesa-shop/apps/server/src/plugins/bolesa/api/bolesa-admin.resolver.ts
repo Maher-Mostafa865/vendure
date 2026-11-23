@@ -1,8 +1,9 @@
 import { Args, Mutation, Query, Resolver } from '@nestjs/graphql';
-import { Allow, Ctx, RequestContext, Transaction } from '@vendure/core';
+import { Allow, Ctx, ID, OrderService, RequestContext, Transaction, UserInputError } from '@vendure/core';
 
 import { bolesaConnectionPermission, bolesaShipmentPermission } from '../permissions';
 import { BolesaConnectionService, UpdateBolesaConnectionInput } from '../services/bolesa-connection.service';
+import { BolesaRateService } from '../services/bolesa-rate.service';
 import { BolesaShipmentService } from '../services/bolesa-shipment.service';
 
 @Resolver()
@@ -10,6 +11,8 @@ export class BolesaAdminResolver {
     constructor(
         private connectionService: BolesaConnectionService,
         private shipmentService: BolesaShipmentService,
+        private rateService: BolesaRateService,
+        private orderService: OrderService,
     ) {}
 
     @Query()
@@ -23,6 +26,16 @@ export class BolesaAdminResolver {
     @Allow(bolesaConnectionPermission.Read)
     async bolesaAccountServices(@Ctx() ctx: RequestContext) {
         return this.connectionService.listAccountServices(ctx);
+    }
+
+    @Query()
+    @Allow(bolesaShipmentPermission.Read)
+    async bolesaOrderCarrierChoices(@Ctx() ctx: RequestContext, @Args() args: { orderId: ID }) {
+        const order = await this.orderService.findOne(ctx, args.orderId, ['lines', 'lines.productVariant']);
+        if (!order) {
+            throw new UserInputError('Order not found');
+        }
+        return this.rateService.carrierChoicesForOrder(ctx, order);
     }
 
     @Query()

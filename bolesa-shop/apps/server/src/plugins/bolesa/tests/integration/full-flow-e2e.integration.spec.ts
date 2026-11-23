@@ -36,6 +36,7 @@ import {
     loadSandboxCredentials,
     seedFullE2eCatalog,
     setLocalPartnerAwbStatus,
+    SERVICE_SLUG,
     shopGql,
     waitUntil,
     withPgClient,
@@ -334,6 +335,9 @@ describe('Full flow E2E — Shop → Worker → Partner', { skip: !ENABLED }, ()
         }
         const refreshed = await orderService.findOne(ctx, orderId, ['lines']);
         assert.ok(refreshed);
+        await orderService.updateCustomFields(ctx, refreshed.id, {
+            bolesaServiceSlug: SERVICE_SLUG,
+        });
         const lines = refreshed.lines.map(l => ({
             orderLineId: l.id,
             quantity: l.quantity,

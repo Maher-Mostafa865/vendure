@@ -62,6 +62,8 @@
     "noShippingMethods": "No shipping methods available. Please check your address.",
     "free": "FREE",
     "continueToPayment": "Continue to payment",
+    "continueToShipping": "Continue to shipping",
+    "standardShipping": "Shipping",
     "selectPaymentMethod": "Select payment method",
     "noPaymentMethods": "No payment methods available.",
     "continueToReview": "Continue to review",
