@@ -9,6 +9,7 @@ import { Separator } from '@/components/ui/separator';
 import { OrderLine } from './types';
 import { useCheckout } from './checkout-provider';
 import { Price } from '@/features/pricing/price';
+import { VariantChoice } from '@/features/products/variant-choice';
 import {useTranslations} from 'next-intl';
 
 function OrderSummaryContent({ order, t }: { order: ReturnType<typeof useCheckout>['order']; t: ReturnType<typeof useTranslations<'Checkout'>> }) {
@@ -36,11 +37,12 @@ function OrderSummaryContent({ order, t }: { order: ReturnType<typeof useCheckou
               <p className="text-sm font-medium line-clamp-2">
                 {line.productVariant.product.name}
               </p>
-              {line.productVariant.name !== line.productVariant.product.name && (
-                <p className="text-xs text-muted-foreground">
-                  {line.productVariant.name}
-                </p>
-              )}
+              <VariantChoice
+                name={line.productVariant.name}
+                productName={line.productVariant.product.name}
+                options={line.productVariant.options}
+                className="text-xs"
+              />
               <p className="text-xs text-muted-foreground">
                 {t('qty', {quantity: line.quantity})}
               </p>

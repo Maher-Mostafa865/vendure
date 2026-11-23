@@ -62,6 +62,14 @@ export const GetActiveOrderForCheckoutQuery = graphql(`
                     id
                     name
                     sku
+                    options {
+                        id
+                        name
+                        group {
+                            id
+                            name
+                        }
+                    }
                     product {
                         id
                         name

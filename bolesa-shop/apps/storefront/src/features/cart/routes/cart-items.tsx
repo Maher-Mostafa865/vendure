@@ -3,6 +3,7 @@ import { Link } from '@/platform/i18n/navigation';
 import {Button} from '@/components/ui/button';
 import {Minus, Plus, X} from 'lucide-react';
 import {Price} from '@/features/pricing/price';
+import {VariantChoice} from '@/features/products/variant-choice';
 import {removeFromCart, adjustQuantity} from './actions';
 import {getTranslations} from 'next-intl/server';
 
@@ -18,6 +19,10 @@ type ActiveOrder = {
             id: string;
             name: string;
             sku: string;
+            options: Array<{
+                name: string;
+                group: { name: string };
+            }>;
             product: {
                 name: string;
                 slug: string;
@@ -74,11 +79,11 @@ export async function CartItems({activeOrder}: { activeOrder: ActiveOrder | null
                         >
                             {line.productVariant.product.name}
                         </Link>
-                        {line.productVariant.name !== line.productVariant.product.name && (
-                            <p className="text-sm text-muted-foreground mt-1">
-                                {line.productVariant.name}
-                            </p>
-                        )}
+                        <VariantChoice
+                            name={line.productVariant.name}
+                            productName={line.productVariant.product.name}
+                            options={line.productVariant.options}
+                        />
                         <p className="text-sm text-muted-foreground mt-1">
                             {t('sku', {sku: line.productVariant.sku})}
                         </p>

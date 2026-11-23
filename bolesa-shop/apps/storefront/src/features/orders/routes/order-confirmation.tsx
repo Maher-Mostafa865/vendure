@@ -10,6 +10,7 @@ import {getRouteLocale} from '@/platform/i18n/server';
 import {getTranslations} from 'next-intl/server';
 import {query} from '@/platform/vendure/api';
 import {graphql} from '@/platform/vendure/graphql';
+import {VariantChoice} from '@/features/products/variant-choice';
 
 const GetOrderByCodeQuery = graphql(`
     query GetOrderByCode($code: String!) {
@@ -24,6 +25,14 @@ const GetOrderByCodeQuery = graphql(`
                 productVariant {
                     id
                     name
+                    options {
+                        id
+                        name
+                        group {
+                            id
+                            name
+                        }
+                    }
                     product {
                         id
                         name
@@ -105,11 +114,11 @@ export async function OrderConfirmation({paramsPromise}: OrderConfirmationProps)
                                 )}
                                 <div className="flex-1 min-w-0">
                                     <p className="font-medium">{line.productVariant.product.name}</p>
-                                    {line.productVariant.name !== line.productVariant.product.name && (
-                                        <p className="text-sm text-muted-foreground">
-                                            {line.productVariant.name}
-                                        </p>
-                                    )}
+                                    <VariantChoice
+                                        name={line.productVariant.name}
+                                        productName={line.productVariant.product.name}
+                                        options={line.productVariant.options}
+                                    />
                                     <p className="text-xs text-muted-foreground mt-0.5">{t('qty', {quantity: line.quantity})}</p>
                                 </div>
                                 <div className="text-right">

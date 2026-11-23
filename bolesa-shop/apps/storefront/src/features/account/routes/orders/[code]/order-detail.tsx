@@ -14,6 +14,7 @@ import {formatDate} from '@/platform/i18n/format';
 import {useLocale, useTranslations} from 'next-intl';
 import type {ResultOf} from '@/platform/vendure/graphql';
 import type {GetOrderDetailQuery} from '@/features/account/graphql';
+import {VariantChoice} from '@/features/products/variant-choice';
 
 type OrderByCode = NonNullable<ResultOf<typeof GetOrderDetailQuery>['orderByCode']>;
 type OrderLineItem = OrderByCode['lines'][number];
@@ -80,9 +81,11 @@ export function OrderDetail({orderPromise}: OrderDetailProps) {
                                             >
                                                 {line.productVariant.product.name}
                                             </Link>
-                                            <p className="text-sm text-muted-foreground">
-                                                {line.productVariant.name}
-                                            </p>
+                                            <VariantChoice
+                                                name={line.productVariant.name}
+                                                productName={line.productVariant.product.name}
+                                                options={line.productVariant.options}
+                                            />
                                             <p className="text-sm text-muted-foreground">
                                                 {t('skuLabel', {sku: line.productVariant.sku})}
                                             </p>
