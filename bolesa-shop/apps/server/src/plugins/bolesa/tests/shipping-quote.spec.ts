@@ -263,6 +263,25 @@ describe('eligible shipping calculation', () => {
         assert.deepEqual((result.metadata as any).options.map((choice: { slug: string }) => choice.slug), ['aramex']);
     });
 
+    it('still offers priced carriers when the default service has no quote', async () => {
+        await wire(
+            async () => ({
+                httpStatus: 200,
+                services: [
+                    { slug: 'smsa', carrierName: 'Smsa', ccPrice: null, codPrice: null, currencyCode: 'EGP' },
+                    { slug: 'aramex', carrierName: 'Aramex', ccPrice: 80, codPrice: 80, currencyCode: 'EGP' },
+                ],
+                rawPrices: [],
+            }),
+            undefined,
+            { enabledServiceSlugs: ['smsa', 'aramex'], defaultServiceSlug: 'smsa' },
+        );
+        const result = await bolesaShippingCalculator.calculate(ctx, order(), args, {} as any);
+        assert.ok(result);
+        assert.equal(result.price, 8000);
+        assert.deepEqual((result.metadata as any).options.map((choice: { slug: string }) => choice.slug), ['aramex']);
+    });
+
     it('does not switch to another carrier when the selected service is disabled', async () => {
         await wire(
             async () => ({

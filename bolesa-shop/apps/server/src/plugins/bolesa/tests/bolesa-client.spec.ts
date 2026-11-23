@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { afterEach, describe, it, mock } from 'node:test';
+import { Logger } from '@vendure/core';
 
 import { BolesaApiError, BolesaClient, mapServiceOption } from '../services/bolesa-client.service';
 
@@ -62,6 +63,24 @@ describe('BolesaClient', () => {
         assert.equal(observed.rawPrices[0].ccPrice, 'null');
         assert.equal(observed.rawPrices[0].codPrice, 'null');
         assert.equal(observed.services[0].ccPrice, undefined);
+    });
+
+    it('logs the services/options request body and not the token', async () => {
+        originalFetch = globalThis.fetch;
+        globalThis.fetch = mockFetch(200, { success: true, data: { services: [] } });
+        const lines: string[] = [];
+        const original = Logger.info;
+        Logger.info = ((message: string) => {
+            lines.push(message);
+        }) as typeof Logger.info;
+        try {
+            const client = new BolesaClient({ apiBaseUrl: auth.apiBaseUrl, encryptionSecret: 'x' });
+            await client.observeServiceOptions(auth, { payment_type: 'cc', weight: 1 });
+        } finally {
+            Logger.info = original;
+        }
+        assert.ok(lines.some(line => line.includes('POST /services/options') && line.includes('"payment_type":"cc"')));
+        assert.equal(lines.some(line => line.includes('test-token')), false);
     });
 
     it('service options HTTP 500 throws and does not yield a zero price', async () => {

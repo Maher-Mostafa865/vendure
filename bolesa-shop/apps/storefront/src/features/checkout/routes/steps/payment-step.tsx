@@ -6,6 +6,7 @@ import { Label } from '@/components/ui/label';
 import { Card } from '@/components/ui/card';
 import { CreditCard } from 'lucide-react';
 import { useCheckout } from '../checkout-provider';
+import { plainText } from '../../plain-text';
 import {useTranslations} from 'next-intl';
 
 interface PaymentStepProps {
@@ -42,8 +43,8 @@ export default function PaymentStep({ onComplete }: PaymentStepProps) {
                 <CreditCard className="h-5 w-5 text-muted-foreground" />
                 <div className="flex-1">
                   <p className="font-medium">{method.name}</p>
-                  {method.description && (
-                    <p className="text-sm text-muted-foreground mt-1" dangerouslySetInnerHTML={{ __html: method.description }} />
+                  {plainText(method.description) && (
+                    <p className="text-sm text-muted-foreground">{plainText(method.description)}</p>
                   )}
                 </div>
               </div>

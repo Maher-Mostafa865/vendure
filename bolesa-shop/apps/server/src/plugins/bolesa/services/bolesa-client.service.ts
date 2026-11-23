@@ -123,7 +123,9 @@ export class BolesaClient {
         auth: BolesaRequestAuth,
         body: Record<string, unknown>,
     ): Promise<ServiceOptionsObservation> {
+        Logger.info(`Bolesa POST /services/options ${JSON.stringify(body)}`, loggerCtx);
         const raw = await this.requestRaw(auth, 'POST', '/services/options', body);
+        Logger.info(`Bolesa POST /services/options -> ${raw.status}`, loggerCtx);
         const data = (raw.data?.data ?? raw.data) as any;
         const rows = (data?.services ?? []) as any[];
         const mapped = rows.map(mapServiceOption).filter(row => row.option.slug);

@@ -9,9 +9,10 @@ import { Loader2, Truck } from 'lucide-react';
 import { useRouter } from '@/platform/i18n/navigation';
 import { useCheckout } from '../checkout-provider';
 import { selectBolesaService, setShippingMethod as setShippingMethodAction } from '../actions';
-import { bolesaChoicesFromMetadata, selectedBolesaSlug } from '../bolesa-choices';
-import {useTranslations, useLocale} from 'next-intl';
-import {toIntlLocale} from '@/platform/i18n/locale-utils';
+import { bolesaChoicesFromMetadata, isBolesaShippingCode, selectedBolesaSlug } from '../bolesa-choices';
+import { plainText } from '../../plain-text';
+import { Price } from '@/features/pricing/price';
+import {useTranslations} from 'next-intl';
 
 interface DeliveryStepProps {
   onComplete: () => void;
@@ -19,31 +20,18 @@ interface DeliveryStepProps {
 
 export default function DeliveryStep({ onComplete }: DeliveryStepProps) {
   const t = useTranslations('Checkout');
-  const locale = useLocale();
-  const intlLocale = toIntlLocale(locale);
   const router = useRouter();
   const { shippingMethods, order } = useCheckout();
   const deliveryOptions = shippingMethods.flatMap((method) => {
-    if (method.code !== 'bolesa-shipping') {
+    const choices = isBolesaShippingCode(method.code) ? bolesaChoicesFromMetadata(method.metadata) : [];
+    if (choices.length === 0) {
       return [{
         key: method.id,
         methodId: method.id,
         slug: null as string | null,
         name: method.name,
-        label: method.description,
+        label: plainText(method.description),
         logoUrl: undefined as string | undefined,
-        price: method.priceWithTax,
-      }];
-    }
-    const choices = bolesaChoicesFromMetadata(method.metadata);
-    if (choices.length === 0) {
-      return [{
-        key: method.id,
-        methodId: method.id,
-        slug: null,
-        name: method.name,
-        label: method.description,
-        logoUrl: undefined,
         price: method.priceWithTax,
       }];
     }
@@ -52,13 +40,13 @@ export default function DeliveryStep({ onComplete }: DeliveryStepProps) {
       methodId: method.id,
       slug: choice.slug,
       name: choice.name,
-      label: choice.label,
+      label: plainText(choice.label),
       logoUrl: choice.logoUrl,
       price: choice.priceMinor,
     }));
   });
   const [selectedMethodId, setSelectedMethodId] = useState<string | null>(() => {
-    const bolesa = shippingMethods.find((method) => method.code === 'bolesa-shipping');
+    const bolesa = shippingMethods.find((method) => isBolesaShippingCode(method.code));
     const currentLine = order.shippingLines?.[0];
     if (bolesa && currentLine?.shippingMethod.id === bolesa.id) {
       const slug = selectedBolesaSlug(bolesa.metadata);
@@ -104,47 +92,40 @@ export default function DeliveryStep({ onComplete }: DeliveryStepProps) {
     <div className="space-y-6">
       <h3 className="font-semibold">{t('selectShippingMethod')}</h3>
 
-      <RadioGroup value={selectedMethodId || ''} onValueChange={setSelectedMethodId}>
-        {deliveryOptions.map((option) => (
-          <Label key={option.key} htmlFor={option.key} className="cursor-pointer">
-            <Card className="p-4">
-              <div className="flex items-center justify-between gap-4">
-                <div className="flex items-center gap-3 flex-1">
+      <RadioGroup value={selectedMethodId || ''} onValueChange={setSelectedMethodId} className="gap-3">
+        {deliveryOptions.map((option) => {
+          const selected = selectedMethodId === option.key;
+          const description = option.label && option.label !== option.name ? option.label : '';
+          return (
+            <Label key={option.key} htmlFor={option.key} className="cursor-pointer">
+              <Card className={`w-full p-4 ${selected ? 'border-primary ring-1 ring-primary/30' : ''}`}>
+                <div className="flex items-center gap-3">
                   <RadioGroupItem value={option.key} id={option.key} />
                   {option.logoUrl ? (
                     <img
                       src={option.logoUrl}
                       alt=""
-                      className="h-8 w-8 rounded object-contain bg-white"
+                      className="h-8 w-8 shrink-0 rounded object-contain bg-white"
                     />
                   ) : (
-                    <Truck className="h-5 w-5 text-muted-foreground" />
+                    <Truck className="h-5 w-5 shrink-0 text-muted-foreground" />
                   )}
-                  <div>
+                  <div className="min-w-0 flex-1">
                     <p className="font-medium">{option.name}</p>
-                    {option.label && (
-                      <p className="text-sm text-muted-foreground mt-1">
-                        {option.label}
-                      </p>
+                    {description && (
+                      <p className="text-sm text-muted-foreground">{description}</p>
                     )}
                   </div>
-                </div>
-                <div className="text-right flex-shrink-0">
-                  <p className="font-semibold">
+                  <p className="shrink-0 font-semibold">
                     {option.price === 0
                       ? t('free')
-                      : order.currencyCode
-                        ? (option.price / 100).toLocaleString(intlLocale, {
-                            style: 'currency',
-                            currency: order.currencyCode,
-                          })
-                        : (option.price / 100).toFixed(2)}
+                      : <Price value={option.price} currencyCode={order.currencyCode} />}
                   </p>
                 </div>
-              </div>
-            </Card>
-          </Label>
-        ))}
+              </Card>
+            </Label>
+          );
+        })}
       </RadioGroup>
 
       <Button

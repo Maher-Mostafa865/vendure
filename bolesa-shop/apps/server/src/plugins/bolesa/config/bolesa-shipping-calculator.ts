@@ -78,14 +78,17 @@ export const bolesaShippingCalculator = new ShippingCalculator({
                 conn.codFeeMode ?? 'absorb',
                 ctx.channel.defaultCurrencyCode,
             );
-            const explicit = customerSlug && customerSlug !== 'auto' ? customerSlug : defaultSlug;
-            const chosen = explicit
-                ? choices.find(choice => choice.slug === explicit)
-                : choices[0];
+            // A shopper's choice that cannot be quoted hides the method.
+            // The merchant default is only the price shown before they choose.
+            // If that default has no quote, the other priced carriers stay available.
+            const customerChoice = customerSlug && customerSlug !== 'auto' ? customerSlug : '';
+            const chosen = customerChoice
+                ? choices.find(choice => choice.slug === customerChoice)
+                : choices.find(choice => choice.slug === defaultSlug) ?? choices[0];
             const blockedReason = !chosen
-                ? explicit && enabled.length && !enabled.includes(explicit)
+                ? customerChoice && enabled.length && !enabled.includes(customerChoice)
                     ? 'service_not_enabled'
-                    : explicit
+                    : customerChoice
                       ? 'slug_not_found'
                       : offered.length
                         ? 'missing_price'

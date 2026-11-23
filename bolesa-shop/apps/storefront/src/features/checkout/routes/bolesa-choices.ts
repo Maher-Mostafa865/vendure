@@ -34,6 +34,10 @@ export function bolesaChoicesFromMetadata(metadata: Record<string, unknown> | nu
     return choices;
 }
 
+export function isBolesaShippingCode(code: string): boolean {
+    return code === 'bolesa-shipping' || code.startsWith('bolesa-shipping-');
+}
+
 export function selectedBolesaSlug(metadata: Record<string, unknown> | null | undefined): string | null {
     const slug = metadata?.serviceSlug;
     return typeof slug === 'string' && slug.length > 0 ? slug : null;
