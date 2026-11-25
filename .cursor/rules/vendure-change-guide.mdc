@@ -1,0 +1,31 @@
+---
+description: Where to put a change in this checkout. Shop, storefront, and Vendure packages are separate.
+alwaysApply: true
+---
+
+# Where a change belongs
+
+This rule is for this git checkout only. The long map is `docs/VENDURE_CHANGE_GUIDE.md`. Do not paste that file into a reply. Open it when the task adds or changes a feature, and read only:
+
+1. Section 2, "Where a change belongs"
+2. The one module section that matches the task
+3. Section 8, the "If I want to change X, start here" row
+4. Section 9, the change note, when the task is finished
+
+`bolesa-shop` runs published `@vendure/*` from `bolesa-shop/node_modules`. A edit under `packages/*` does not change the shop until that package is built and the shop is pointed at the build. Section 6 and section 7 of the guide say how.
+
+## Decide before editing
+
+- Storefront markup, copy, or URL state: `bolesa-shop/apps/storefront`
+- Shop field, handler, job, or dashboard block: `bolesa-shop/apps/server/src/plugins`, registered from `apps/server/src/vendure-config.ts`
+- Plugin option that already exists: `apps/server/src/vendure-config.ts`
+- Behavior inside `@vendure/core` or `packages/dashboard` with no plugin hook: `packages/*`, then section 7 of the guide
+
+`packages/dev-server` is the framework sample. Restarting it does not restart `bolesa-shop`.
+
+## Do not
+
+- Edit `bolesa-shop/node_modules/@vendure` as the source of the fix.
+- Set `synchronize: true`.
+- Point Bolesa integration tests at the `vendure-dev` database.
+- Invent a path, script, queue, or class. If the guide marks it "Needs verification", check the file before using it.
