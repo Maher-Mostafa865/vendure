@@ -14,12 +14,17 @@ import 'dotenv/config';
 import path from 'path';
 import { BolesaPlugin } from './plugins/bolesa';
 import { NestLensDevPlugin } from './plugins/nestlens/nestlens.plugin';
+import { PaymobPlugin } from './plugins/paymob';
 import { StorefrontRevalidationPlugin } from './plugins/storefront-revalidation/storefront-revalidation.plugin';
 
 const IS_DEV = process.env.APP_ENV === 'dev';
 // PORT wins because hosting platforms inject it into the environment at runtime, and that
 // must take precedence over any value baked into the .env file at scaffold time.
 const serverPort = +process.env.PORT || +process.env.VENDURE_SERVER_PORT || 3000;
+const encryptionSecret =
+    process.env.VENDURE_ENCRYPTION_KEY || process.env.COOKIE_SECRET || 'dev-only-change-me';
+const serverBaseUrl = (process.env.APP_URL || `http://localhost:${serverPort}`).replace(/\/$/, '');
+const storefrontBaseUrl = (process.env.STOREFRONT_URL || 'http://localhost:3001').replace(/\/$/, '');
 
 export const config: VendureConfig = {
     apiOptions: {
@@ -66,7 +71,7 @@ export const config: VendureConfig = {
     },
     systemOptions: {
         encryptionStrategy: new DefaultEncryptionStrategy({
-            secret: process.env.VENDURE_ENCRYPTION_KEY || process.env.COOKIE_SECRET || 'dev-only-change-me',
+            secret: encryptionSecret,
         }),
     },
     // When adding or altering custom field definitions, the database will
@@ -75,9 +80,14 @@ export const config: VendureConfig = {
     plugins: [
         BolesaPlugin.init({
             apiBaseUrl: process.env.BOLESA_API_BASE_URL || 'https://api.bolesa.example/api/pcl/v1',
-            encryptionSecret: process.env.VENDURE_ENCRYPTION_KEY || process.env.COOKIE_SECRET || 'dev-only-change-me',
+            encryptionSecret,
             rateCacheTtlMs: 600_000,
             defaultCountryCode: 'EG',
+        }),
+        PaymobPlugin.init({
+            serverBaseUrl,
+            storefrontBaseUrl,
+            encryptionSecret,
         }),
         GraphiqlPlugin.init(),
         AssetServerPlugin.init({

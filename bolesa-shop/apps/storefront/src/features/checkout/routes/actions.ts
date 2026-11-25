@@ -6,6 +6,7 @@ import {isBolesaShippingCode} from './bolesa-choices';
 import {getActiveCurrencyCode} from '@/features/currency/currency-server';
 import {CreateCustomerAddressMutation} from '@/features/account/graphql';
 import {revalidatePath, updateTag} from 'next/cache';
+import {redirect as nextRedirect} from 'next/navigation';
 import {redirect} from '@/platform/i18n/navigation';
 import {getLocale} from 'next-intl/server';
 import {getAuthToken} from '@/platform/vendure/auth-token';
@@ -368,14 +369,35 @@ export async function placeOrder(paymentMethodCode: string) {
         );
     }
 
-    const orderCode = result.data.addPaymentToOrder.code;
+    const order = result.data.addPaymentToOrder;
+    const orderCode = order.code;
+    const payments = order.payments ?? [];
+    const latestPayment = [...payments].sort((a, b) => Number(b.id) - Number(a.id))[0];
+    const redirectUrl = readPublicRedirectUrl(latestPayment?.metadata);
 
     // Update the cart tag to immediately invalidate cached cart data
     updateTag('cart');
     updateTag('active-order');
 
+    if (redirectUrl) {
+        // External Paymob hosted checkout — absolute URL, leave the app.
+        nextRedirect(redirectUrl);
+    }
+
     const locale = await getLocale();
     redirect({href: `/order-confirmation/${orderCode}`, locale});
+}
+
+function readPublicRedirectUrl(metadata: unknown): string | null {
+    if (!metadata || typeof metadata !== 'object') {
+        return null;
+    }
+    const publicMeta = (metadata as { public?: unknown }).public;
+    if (!publicMeta || typeof publicMeta !== 'object') {
+        return null;
+    }
+    const url = (publicMeta as { redirectUrl?: unknown }).redirectUrl;
+    return typeof url === 'string' && /^https?:\/\//i.test(url) ? url : null;
 }
 
 interface GuestCustomerInput {

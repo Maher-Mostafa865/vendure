@@ -344,21 +344,31 @@ describe('bolesa eligibility checker', () => {
         assert.equal(ok, false);
     });
 
-    it('fails when the country is not Egypt', async () => {
+    it('fails when the country does not match the channel market', async () => {
         await init(true);
-        const ok = await bolesaEligibilityChecker.check({} as any, order('AF'), [], {} as any);
+        const ctx = { channel: { customFields: { marketCountry: 'EG' } } } as any;
+        const ok = await bolesaEligibilityChecker.check(ctx, order('AF'), [], {} as any);
         assert.equal(ok, false);
     });
 
     it('fails when the channel connection is inactive', async () => {
         await init(false);
-        const ok = await bolesaEligibilityChecker.check({} as any, order('EG'), [], {} as any);
+        const ctx = { channel: { customFields: { marketCountry: 'EG' } } } as any;
+        const ok = await bolesaEligibilityChecker.check(ctx, order('EG'), [], {} as any);
         assert.equal(ok, false);
     });
 
     it('passes for Egypt with a city hash and an active connection', async () => {
         await init(true);
-        const ok = await bolesaEligibilityChecker.check({} as any, order('EG'), [], {} as any);
+        const ctx = { channel: { customFields: { marketCountry: 'EG' } } } as any;
+        const ok = await bolesaEligibilityChecker.check(ctx, order('EG'), [], {} as any);
+        assert.equal(ok, true);
+    });
+
+    it('passes for Saudi when the channel market is SA', async () => {
+        await init(true);
+        const ctx = { channel: { customFields: { marketCountry: 'SA' } } } as any;
+        const ok = await bolesaEligibilityChecker.check(ctx, order('SA'), [], {} as any);
         assert.equal(ok, true);
     });
 });
