@@ -7,15 +7,16 @@ import {
 } from '@/vdb/components/ui/dropdown-menu.js';
 import type { Tone } from '@/vdb/components/ui/status-badge.js';
 import { cn } from '@/vdb/lib/utils.js';
-import { orderStateDictionary } from '@/vdb/utils/state-type.js';
+import { getStateVisual, getToneVisual } from '@/vdb/utils/state-visual.js';
 import { Trans } from '@lingui/react/macro';
-import { CircleAlert, CircleCheck, CircleDashed, CircleX, EllipsisVertical } from 'lucide-react';
-import type { ReactNode } from 'react';
+import { EllipsisVertical } from 'lucide-react';
 
 export type StateTransitionAction = {
     label: string;
     onClick: () => void;
     disabled?: boolean;
+    /** Target state, used to pick a distinct icon and color. */
+    state?: string;
     tone?: Tone;
     /** Marks an irreversible transition (e.g. cancel) so it renders with destructive styling. */
     destructive?: boolean;
@@ -34,15 +35,8 @@ export function StateTransitionControl({
     actions,
     isLoading,
 }: Readonly<StateTransitionControlProps>) {
-    const currentTone = orderStateDictionary.toneFor(currentState);
-    const iconForTone: Record<Tone, ReactNode> = {
-        critical: <CircleX className="h-4 w-4 text-destructive" />,
-        success: <CircleCheck className="h-4 w-4 text-success" />,
-        warning: <CircleAlert className="h-4 w-4 text-warning" />,
-        info: <CircleDashed className="h-4 w-4 text-muted-foreground" />,
-        progress: <CircleDashed className="h-4 w-4 text-muted-foreground" />,
-        neutral: <CircleDashed className="h-4 w-4 text-muted-foreground" />,
-    };
+    const currentVisual = getStateVisual(currentState);
+    const CurrentIcon = currentVisual.icon;
 
     return (
         <div className="flex min-w-0">
@@ -53,8 +47,12 @@ export function StateTransitionControl({
                 )}
                 title={statesTranslationFunction(currentState)}
             >
-                <div className="flex-shrink-0">{iconForTone[currentTone]}</div>
-                <span className="truncate">{statesTranslationFunction(currentState)}</span>
+                <div className="flex-shrink-0">
+                    <CurrentIcon className={cn('h-4 w-4', currentVisual.className)} />
+                </div>
+                <span className={cn('truncate', currentVisual.className)}>
+                    {statesTranslationFunction(currentState)}
+                </span>
             </div>
             {actions.length > 0 && (
                 <DropdownMenu>
@@ -69,6 +67,12 @@ export function StateTransitionControl({
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end" className="min-w-48">
                         {actions.map((action, index) => {
+                            const actionVisual = action.state
+                                ? getStateVisual(action.state)
+                                : action.destructive
+                                  ? getStateVisual('Cancelled')
+                                  : getToneVisual(action.tone);
+                            const ActionIcon = actionVisual.icon;
                             return (
                                 <DropdownMenuItem
                                     key={action.label + index}
@@ -76,9 +80,7 @@ export function StateTransitionControl({
                                     variant={action.destructive ? 'destructive' : 'default'}
                                     disabled={action.disabled || isLoading}
                                 >
-                                    {action.destructive
-                                        ? iconForTone.critical
-                                        : iconForTone[action.tone ?? 'neutral']}
+                                    <ActionIcon className={cn('h-4 w-4', actionVisual.className)} />
                                     <Trans>{action.label}</Trans>
                                 </DropdownMenuItem>
                             );

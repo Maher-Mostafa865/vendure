@@ -12,6 +12,7 @@ import { useDynamicTranslations } from '@/vdb/hooks/use-dynamic-translations.js'
 import { useServerConfig } from '@/vdb/hooks/use-server-config.js';
 import { cn } from '@/vdb/lib/utils.js';
 import { isDestructiveTransition, orderStateDictionary } from '@/vdb/utils/state-type.js';
+import { getStateVisual } from '@/vdb/utils/state-visual.js';
 import { Trans, useLingui } from '@lingui/react/macro';
 import { ArrowRight, Workflow } from 'lucide-react';
 import { useMemo } from 'react';
@@ -106,6 +107,8 @@ export function OrderProcessDialog({ currentState }: Readonly<OrderProcessDialog
                         {orderProcess.map(state => {
                             const tone = orderStateDictionary.toneFor(state.name);
                             const colors = stateColors[tone];
+                            const visual = getStateVisual(state.name);
+                            const StateIcon = visual.icon;
                             const isCurrent = state.name === currentState;
                             const isNext = nextStates.has(state.name);
 
@@ -113,7 +116,7 @@ export function OrderProcessDialog({ currentState }: Readonly<OrderProcessDialog
                                 <div key={state.name} className="flex items-start gap-3">
                                     <div
                                         className={cn(
-                                            'flex-shrink-0 w-52 rounded-md border px-3 py-2 text-sm font-medium',
+                                            'flex flex-shrink-0 w-52 items-center gap-1.5 rounded-md border px-3 py-2 text-sm font-medium',
                                             colors.bg,
                                             colors.border,
                                             colors.text,
@@ -129,7 +132,10 @@ export function OrderProcessDialog({ currentState }: Readonly<OrderProcessDialog
                                                 'border-dashed',
                                         )}
                                     >
-                                        {getTranslatedOrderState(state.name)}
+                                        <StateIcon className={cn('h-4 w-4 shrink-0', visual.className)} />
+                                        <span className={visual.className}>
+                                            {getTranslatedOrderState(state.name)}
+                                        </span>
                                     </div>
                                     {state.to.length > 0 && (
                                         <div className="flex gap-2 min-h-[36px]">
@@ -138,19 +144,29 @@ export function OrderProcessDialog({ currentState }: Readonly<OrderProcessDialog
                                                 {state.to.map(target => {
                                                     const targetTone = orderStateDictionary.toneFor(target);
                                                     const targetColors = stateColors[targetTone];
+                                                    const targetVisual = getStateVisual(target);
+                                                    const TargetIcon = targetVisual.icon;
                                                     const isTargetCurrent = target === currentState;
                                                     return (
                                                         <span
                                                             key={target}
                                                             className={cn(
-                                                                'inline-flex items-center rounded px-2 py-0.5 text-xs border',
+                                                                'inline-flex items-center gap-1 rounded px-2 py-0.5 text-xs border',
                                                                 targetColors.bg,
                                                                 targetColors.border,
                                                                 targetColors.text,
                                                                 isTargetCurrent && 'font-semibold',
                                                             )}
                                                         >
-                                                            {getTranslatedOrderState(target)}
+                                                            <TargetIcon
+                                                                className={cn(
+                                                                    'h-3 w-3 shrink-0',
+                                                                    targetVisual.className,
+                                                                )}
+                                                            />
+                                                            <span className={targetVisual.className}>
+                                                                {getTranslatedOrderState(target)}
+                                                            </span>
                                                         </span>
                                                     );
                                                 })}

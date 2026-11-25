@@ -5,6 +5,7 @@ import { api } from '@/vdb/graphql/api.js';
 import { useDynamicTranslations } from '@/vdb/hooks/use-dynamic-translations.js';
 import { useLocalFormat } from '@/vdb/hooks/use-local-format.js';
 import { orderStateDictionary } from '@/vdb/utils/state-type.js';
+import { StateStatusIcon } from '@/vdb/utils/state-visual.js';
 import { useQuery } from '@tanstack/react-query';
 
 import { sellerOrdersDocument } from '../orders.graphql.js';
@@ -57,6 +58,7 @@ export function SellerOrdersCard({ orderId }: Readonly<SellerOrdersCardProps>) {
                                 {seller && <Badge variant="default">{seller.name}</Badge>}
                             </div>
                             <StatusBadge tone={orderStateDictionary.toneFor(sellerOrder.state)}>
+                                <StateStatusIcon state={sellerOrder.state} className="h-3 w-3" />
                                 {getTranslatedOrderState(sellerOrder.state)}
                             </StatusBadge>
                         </div>

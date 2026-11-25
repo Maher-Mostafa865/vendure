@@ -147,6 +147,7 @@ export function PaymentDetails({ payment, currencyCode, onSuccess }: Readonly<Pa
         if (payment.nextStates?.includes('Settled')) {
             actions.push({
                 label: t`Settle payment`,
+                state: 'Settled',
                 onClick: handleSettlePayment,
                 tone: 'success',
                 disabled: settlePaymentMutation.isPending,
@@ -159,6 +160,7 @@ export function PaymentDetails({ payment, currencyCode, onSuccess }: Readonly<Pa
                     state === 'Cancelled'
                         ? t`Cancel payment`
                         : t`Transition to ${getTranslatedPaymentState(state)}`,
+                state,
                 tone: orderStateDictionary.toneFor(state),
                 destructive: isDestructiveTransition(state),
                 onClick: () => handlePaymentStateTransition(state),

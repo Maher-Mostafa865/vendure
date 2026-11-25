@@ -4,6 +4,7 @@ import { Button } from '@/vdb/components/ui/button.js';
 import { StatusBadge } from '@/vdb/components/ui/status-badge.js';
 import { useDynamicTranslations } from '@/vdb/hooks/use-dynamic-translations.js';
 import { orderStateDictionary } from '@/vdb/utils/state-type.js';
+import { StateStatusIcon } from '@/vdb/utils/state-visual.js';
 import { Link } from '@tanstack/react-router';
 import { ChevronDown, ChevronUp } from 'lucide-react';
 import { useMemo, useState } from 'react';
@@ -34,7 +35,12 @@ export const OrderStateCell: DataTableCellComponent<{ state: string }> = ({ row 
     if (!value) {
         return null;
     }
-    return <StatusBadge tone={orderStateDictionary.toneFor(value)}>{getTranslatedOrderState(value)}</StatusBadge>;
+    return (
+        <StatusBadge tone={orderStateDictionary.toneFor(value)}>
+            <StateStatusIcon state={value} className="h-3 w-3" />
+            {getTranslatedOrderState(value)}
+        </StatusBadge>
+    );
 };
 
 export const OrderMoneyCell: DataTableCellComponent<{ currencyCode: string }> = ({ cell, row }) => {

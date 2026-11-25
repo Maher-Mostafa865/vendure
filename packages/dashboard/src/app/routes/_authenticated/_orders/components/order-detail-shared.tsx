@@ -134,6 +134,7 @@ export function OrderDetailShared({
             .filter((state: string) => state !== 'Modifying')
             .map((state: string) => ({
                 label: t`Transition to ${getTranslatedOrderState(state)}`,
+                state,
                 tone: orderStateDictionary.toneFor(state),
                 destructive: isDestructiveTransition(state),
                 onClick: async () => {

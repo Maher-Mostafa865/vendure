@@ -102,6 +102,7 @@ export function FulfillmentDetails({ order, fulfillment, onSuccess }: Readonly<F
             const suggestedState = getTranslatedFulfillmentState(suggested);
             actions.push({
                 label: t`Transition to ${suggestedState}`,
+                state: suggested,
                 onClick: () => handleStateTransition(suggested),
                 disabled: transitionFulfillmentMutation.isPending,
             });
@@ -110,6 +111,7 @@ export function FulfillmentDetails({ order, fulfillment, onSuccess }: Readonly<F
         nextOtherStates().forEach(state => {
             actions.push({
                 label: t`Transition to ${getTranslatedFulfillmentState(state)}`,
+                state,
                 tone: orderStateDictionary.toneFor(state),
                 destructive: isDestructiveTransition(state),
                 onClick: () => handleStateTransition(state),

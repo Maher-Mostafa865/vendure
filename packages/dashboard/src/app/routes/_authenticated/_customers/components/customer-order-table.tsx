@@ -3,6 +3,7 @@ import { PaginatedListDataTable } from '@/vdb/components/shared/paginated-list-d
 import { Button } from '@/vdb/components/ui/button.js';
 import { StatusBadge } from '@/vdb/components/ui/status-badge.js';
 import { orderStateDictionary } from '@/vdb/utils/state-type.js';
+import { StateStatusIcon } from '@/vdb/utils/state-visual.js';
 import { Link } from '@tanstack/react-router';
 import { ColumnFiltersState, SortingState } from '@tanstack/react-table';
 import { ReactNode, useState } from 'react';
@@ -61,7 +62,12 @@ export function CustomerOrderTable({ customerId, title }: Readonly<CustomerOrder
                         if (!value) {
                             return null;
                         }
-                        return <StatusBadge tone={orderStateDictionary.toneFor(value)}>{value}</StatusBadge>;
+                        return (
+                            <StatusBadge tone={orderStateDictionary.toneFor(value)}>
+                                <StateStatusIcon state={value} className="h-3 w-3" />
+                                {value}
+                            </StatusBadge>
+                        );
                     },
                 },
                 code: {
