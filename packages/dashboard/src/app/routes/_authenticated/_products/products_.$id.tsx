@@ -23,6 +23,7 @@ import {
     PageTitle,
 } from '@/vdb/framework/layout-engine/page-layout.js';
 import { detailPageRouteLoader } from '@/vdb/framework/page/detail-page-route-loader.js';
+import { dropUnchangedTranslationRows } from '@/vdb/framework/page/strip-unchanged-translations.js';
 import { useDetailPage } from '@/vdb/framework/page/use-detail-page.js';
 import { api } from '@/vdb/graphql/api.js';
 import { useChannel } from '@/vdb/hooks/use-channel.js';
@@ -30,7 +31,7 @@ import { Trans, useLingui } from '@lingui/react/macro';
 import { createFileRoute, Link, useNavigate } from '@tanstack/react-router';
 import { Layers, Package, PlusIcon } from 'lucide-react';
 import { useRef, useState } from 'react';
-import { Controller } from 'react-hook-form';
+import { Controller, type UseFormReturn } from 'react-hook-form';
 import { toast } from 'sonner';
 import { AddOptionGroupDialog } from './components/add-option-group-dialog.js';
 import { GenerateVariantsPanel } from './components/generate-variants-panel.js';
@@ -133,7 +134,7 @@ function ProductDetailPage() {
     const { t } = useLingui();
     const refreshRef = useRef<() => void>(() => {});
     const { channels } = useChannel();
-    const { priceFactor, priceFactorField } = usePriceFactor();
+    const { priceFactor, priceFactorField, priceFactorValid } = usePriceFactor();
 
     const { form, submitHandler, entity, isPending, refreshEntity, resetForm } = useDetailPage({
         pageId,
@@ -144,6 +145,7 @@ function ProductDetailPage() {
         queryDocument: productDetailDocument,
         createDocument: createProductDocument,
         updateDocument: updateProductDocument,
+        transformUpdateInput: dropUnchangedTranslationRows((): UseFormReturn<any> => form),
         extendSchema: creatingNewEntity ? requireGeneratedSlug : undefined,
         setValuesForUpdate: entity => {
             return {
@@ -388,6 +390,7 @@ function ProductDetailPage() {
                                 priceFactor,
                             })}
                             additionalAssignFields={priceFactorField}
+                            additionalAssignFieldsValid={priceFactorValid}
                             queryKeyScope={['DetailPage', 'product']}
                         />
                     </PageBlock>

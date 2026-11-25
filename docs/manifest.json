@@ -218,7 +218,7 @@
           "title": "CLI",
           "slug": "cli",
           "file": "docs/guides/developer-guide/cli/index.mdx",
-          "lastModified": "2026-11-02T13:57:36+01:00"
+          "lastModified": "2026-11-17T23:43:03+01:00"
         },
         {
           "title": "AI-assisted Development",
@@ -2914,7 +2914,7 @@
                   "title": "DefaultStockLocationStrategy",
                   "slug": "default-stock-location-strategy",
                   "file": "docs/reference/typescript-api/products-stock/default-stock-location-strategy.mdx",
-                  "lastModified": "2026-10-05T09:30:37+02:00"
+                  "lastModified": "2026-11-25T09:33:14Z"
                 },
                 {
                   "title": "MultiChannelStockLocationStrategy",
@@ -2952,7 +2952,7 @@
                   "title": "FacetValueChecker",
                   "slug": "facet-value-checker",
                   "file": "docs/reference/typescript-api/promotions/facet-value-checker.mdx",
-                  "lastModified": "2026-04-20T16:08:16+02:00"
+                  "lastModified": "2026-11-25T12:32:08Z"
                 },
                 {
                   "title": "Promotion Action",
@@ -3108,7 +3108,7 @@
                   "title": "OrderModifier",
                   "slug": "order-modifier",
                   "file": "docs/reference/typescript-api/service-helpers/order-modifier.mdx",
-                  "lastModified": "2026-10-05T09:50:33+02:00"
+                  "lastModified": "2026-11-17T15:01:49Z"
                 },
                 {
                   "title": "ProductPriceApplicator",
@@ -3242,7 +3242,7 @@
                   "title": "OrderService",
                   "slug": "order-service",
                   "file": "docs/reference/typescript-api/services/order-service.mdx",
-                  "lastModified": "2026-10-19T19:00:30Z"
+                  "lastModified": "2026-11-17T15:01:49Z"
                 },
                 {
                   "title": "OrderTestingService",
@@ -3320,7 +3320,7 @@
                   "title": "SessionService",
                   "slug": "session-service",
                   "file": "docs/reference/typescript-api/services/session-service.mdx",
-                  "lastModified": "2026-08-31T14:33:32+02:00"
+                  "lastModified": "2026-11-25T11:01:32Z"
                 },
                 {
                   "title": "SettingsStoreService",
@@ -3860,7 +3860,7 @@
                   "title": "Email Plugin Types",
                   "slug": "email-plugin-types",
                   "file": "docs/reference/core-plugins/email-plugin/email-plugin-types.mdx",
-                  "lastModified": "2026-09-09T11:11:11Z"
+                  "lastModified": "2026-11-24T13:09:43Z"
                 },
                 {
                   "title": "Email Utils",
@@ -3920,7 +3920,7 @@
                   "title": "Transport Options",
                   "slug": "transport-options",
                   "file": "docs/reference/core-plugins/email-plugin/transport-options.mdx",
-                  "lastModified": "2026-09-09T11:11:11Z"
+                  "lastModified": "2026-11-24T13:09:43Z"
                 }
               ],
               "lastModified": "2026-10-21T08:21:29Z"
@@ -4875,7 +4875,7 @@
                   "title": "PageBlock",
                   "slug": "page-block",
                   "file": "docs/reference/dashboard/page-layout/page-block.mdx",
-                  "lastModified": "2026-09-29T13:43:24Z"
+                  "lastModified": "2026-11-17T14:25:16Z"
                 },
                 {
                   "title": "PageTitle",
