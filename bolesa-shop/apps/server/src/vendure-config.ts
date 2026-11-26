@@ -18,6 +18,9 @@ import { PaymobPlugin } from './plugins/paymob';
 import { StorefrontRevalidationPlugin } from './plugins/storefront-revalidation/storefront-revalidation.plugin';
 
 const IS_DEV = process.env.APP_ENV === 'dev';
+// nestlens@0.14 peers Nest 9–11; Vendure 3.8 ships Nest 12, so NestLensModule.forRoot()
+// fails DI (HttpAdapterHost). Opt in only after nestlens supports Nest 12.
+const NESTLENS_ENABLED = process.env.NESTLENS_ENABLED === '1';
 // PORT wins because hosting platforms inject it into the environment at runtime, and that
 // must take precedence over any value baked into the .env file at scaffold time.
 const serverPort = +process.env.PORT || +process.env.VENDURE_SERVER_PORT || 3000;
@@ -133,7 +136,7 @@ export const config: VendureConfig = {
             },
         }),
         StorefrontRevalidationPlugin,
-        ...(IS_DEV ? [NestLensDevPlugin] : []),
+        ...(IS_DEV && NESTLENS_ENABLED ? [NestLensDevPlugin] : []),
         DashboardPlugin.init({
             route: 'dashboard',
             appDir: IS_DEV
