@@ -786,7 +786,8 @@ function BolesaShipmentBlock({ context }: { context: { entity?: any } }) {
             <CarrierChoice order={order} />
             {bolesa.length === 0 ? (
                 <div className="text-sm text-muted-foreground">
-                    Payment does not create a shipment. Choose a carrier, then create the fulfillment.
+                    Payment does not create a shipment. Choose a carrier, then use
+                    &quot;Fulfill order&quot; in the top action bar (not in this card).
                 </div>
             ) : (
                 bolesa.map((f: any) => (

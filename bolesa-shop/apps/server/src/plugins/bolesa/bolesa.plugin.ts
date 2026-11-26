@@ -13,6 +13,7 @@ import { BolesaShopResolver } from './api/bolesa-shop.resolver';
 import { bolesaCodEligibilityChecker } from './config/bolesa-cod-eligibility-checker';
 import { bolesaCodPaymentHandler } from './config/bolesa-cod-payment-handler';
 import { bolesaEligibilityChecker } from './config/bolesa-eligibility-checker';
+import { bolesaCodOrderProcess } from './config/bolesa-cod-order-process';
 import { bolesaFulfillmentHandler } from './config/bolesa-fulfillment-handler';
 import { bolesaFulfillmentProcess } from './config/bolesa-fulfillment-process';
 import { bolesaShippingCalculator } from './config/bolesa-shipping-calculator';
@@ -104,6 +105,11 @@ import { BolesaPluginOptions } from './types';
         const processes = config.shippingOptions.process ?? [];
         if (!processes.includes(bolesaFulfillmentProcess)) {
             config.shippingOptions.process = [...processes, bolesaFulfillmentProcess];
+        }
+
+        const orderProcesses = config.orderOptions.process ?? [];
+        if (!orderProcesses.includes(bolesaCodOrderProcess)) {
+            config.orderOptions.process = [...orderProcesses, bolesaCodOrderProcess];
         }
 
         pushUnique(
