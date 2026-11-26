@@ -270,7 +270,7 @@ Each module lists the shop files first, then the framework files the shop is act
 - `bolesa-shop/apps/server/src/plugins/bolesa/dashboard/index.tsx`
 - `defineDashboardExtension` registers:
   - route `/bolesa-connection` in the settings nav (`sectionId: 'settings'`, permission `ReadBolesaConnection`)
-  - page block `bolesa-shipment-status` on `order-detail`, main column, after `fulfillment-details`
+  - page block `bolesa-shipment-status` on `order-detail`, main column, after `fulfillment-details` (checkout shipping snapshot + AWB carrier picker)
 - Plugin points at that file: `dashboard: './dashboard/index.tsx'` in `bolesa.plugin.ts`
 - Dashboard is served by `DashboardPlugin` in `vendure-config.ts` at route `dashboard`
 
@@ -330,7 +330,7 @@ Each module lists the shop files first, then the framework files the shop is act
 
 - Fulfillment handler `bolesa-fulfillment` does **not** call the Partner: `apps/server/src/plugins/bolesa/config/bolesa-fulfillment-handler.ts`
 - After commit, `BolesaShipmentService` listens to `FulfillmentEvent`, `OrderPlacedEvent`, and `OrderStateTransitionEvent` (`bolesa-shipment.service.ts`)
-- Order custom fields: `paymentPreference`, `bolesaServiceSlug`, `bolesaQuote` in `custom-fields.ts`
+- Order custom fields: `paymentPreference`, `bolesaServiceSlug`, `bolesaQuote` in `custom-fields.ts`. On `OrderPlacedEvent`, `persistQuoteOnOrderPlaced` freezes priority-winner carrier + profit into `bolesaQuote` JSON and sets `bolesaServiceSlug` if empty. Dashboard order block shows that snapshot (live Connection profit edits do not rewrite it).
 - Fulfillment custom fields: `bolesaTrackingNumber`, `bolesaStatus`, `bolesaSyncStatus`, `bolesaLabelAvailability`, `bolesaShipmentKey`
 
 **Storefront**

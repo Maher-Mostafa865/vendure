@@ -100,7 +100,12 @@ export function getBolesaCustomFields(): {
                 type: 'string',
                 public: false,
                 nullable: true,
-                label: [{ languageCode: LanguageCode.en, value: 'Carrier chosen by the admin for the AWB' }],
+                label: [
+                    {
+                        languageCode: LanguageCode.en,
+                        value: 'Carrier (checkout priority winner, or admin override for AWB)',
+                    },
+                ],
                 ui: { dashboard: false },
             },
             {
@@ -110,7 +115,12 @@ export function getBolesaCustomFields(): {
                 nullable: true,
                 readonly: true,
                 requiresPermission: Permission.ReadOrder,
-                label: [{ languageCode: LanguageCode.en, value: 'Persisted Bolesa quote JSON' }],
+                label: [
+                    {
+                        languageCode: LanguageCode.en,
+                        value: 'Frozen checkout shipping snapshot (carrier, profit, charged total)',
+                    },
+                ],
                 ui: { dashboard: false },
             },
         ],

@@ -85,6 +85,18 @@ const setCarrierMutation = `
   }
 `;
 
+const orderCheckoutQuoteQuery = `
+  query BolesaOrderCheckoutQuote($id: ID!) {
+    order(id: $id) {
+      id
+      customFields {
+        bolesaQuote
+        bolesaServiceSlug
+      }
+    }
+  }
+`;
+
 const testMutation = `
   mutation TestBolesaConnection {
     testBolesaConnection { ok message }
@@ -703,7 +715,138 @@ function carrierChoiceLabel(choice: {
     return `${choice.name} — ${carrier} + profit ${formatStoredRate(choice.profitMinor, choice.currencyCode)}`;
 }
 
-function CarrierChoice({ order }: { order: any }) {
+type CheckoutQuoteSnapshot = {
+    serviceSlug?: string;
+    carrierName?: string;
+    priority?: number;
+    priceMinor?: number;
+    carrierPriceMinor?: number;
+    profitMinor?: number;
+    currencyCode?: string;
+    paymentPreference?: string;
+    capturedAt?: string;
+};
+
+function parseCheckoutQuote(raw: unknown): CheckoutQuoteSnapshot | null {
+    if (!raw || typeof raw !== 'string') {
+        return null;
+    }
+    try {
+        const parsed = JSON.parse(raw) as CheckoutQuoteSnapshot;
+        if (!parsed || typeof parsed !== 'object') {
+            return null;
+        }
+        return parsed;
+    } catch {
+        return null;
+    }
+}
+
+function useCheckoutQuote(order: any) {
+    return useQuery({
+        queryKey: ['bolesaOrderCheckoutQuote', order?.id],
+        enabled: Boolean(order?.id),
+        queryFn: async () => {
+            const data = await adminApi<{
+                order: { customFields?: { bolesaQuote?: string; bolesaServiceSlug?: string } } | null;
+            }>(orderCheckoutQuoteQuery, { id: order.id });
+            return data.order?.customFields ?? null;
+        },
+        select: fields =>
+            parseCheckoutQuote(fields?.bolesaQuote) ??
+            parseCheckoutQuote(order?.customFields?.bolesaQuote),
+    });
+}
+
+function CheckoutShippingSnapshot({
+    quote,
+    isLoading,
+}: {
+    quote: CheckoutQuoteSnapshot | null | undefined;
+    isLoading: boolean;
+}) {
+    if (isLoading && !quote) {
+        return (
+            <div className="rounded-md border border-dashed p-3 text-sm text-muted-foreground">
+                Loading checkout shipping snapshot…
+            </div>
+        );
+    }
+    if (!quote) {
+        return (
+            <div className="space-y-1 rounded-md border border-dashed p-3 text-sm text-muted-foreground">
+                <div className="font-medium text-foreground">Checkout shipping snapshot</div>
+                <p>No frozen quote on this order yet (older orders, or Bolesa was inactive at checkout).</p>
+            </div>
+        );
+    }
+    const currency = quote.currencyCode || 'EGP';
+    const company = quote.carrierName || quote.serviceSlug || 'Unknown carrier';
+    const preference = quote.paymentPreference === 'cod' ? 'Cash on delivery' : 'Card / prepaid';
+    return (
+        <div className="space-y-2 rounded-md border bg-muted/20 p-3">
+            <div className="font-medium">Checkout shipping snapshot</div>
+            <p className="text-xs text-muted-foreground">
+                Frozen when the customer placed the order (priority winner + profit at that moment).
+                Editing profit later in Bolesa Connection does not change these numbers.
+            </p>
+            <dl className="grid gap-1 text-sm sm:grid-cols-2">
+                <div>
+                    <dt className="text-muted-foreground">Company</dt>
+                    <dd className="font-medium">{company}</dd>
+                </div>
+                <div>
+                    <dt className="text-muted-foreground">Service slug</dt>
+                    <dd className="font-mono text-xs">{quote.serviceSlug || '—'}</dd>
+                </div>
+                <div>
+                    <dt className="text-muted-foreground">Priority used</dt>
+                    <dd>{quote.priority ?? '—'}</dd>
+                </div>
+                <div>
+                    <dt className="text-muted-foreground">Payment type</dt>
+                    <dd>{preference}</dd>
+                </div>
+                <div>
+                    <dt className="text-muted-foreground">Carrier rate</dt>
+                    <dd>
+                        {typeof quote.carrierPriceMinor === 'number'
+                            ? formatStoredRate(quote.carrierPriceMinor, currency)
+                            : '—'}
+                    </dd>
+                </div>
+                <div>
+                    <dt className="text-muted-foreground">Profit</dt>
+                    <dd>
+                        {typeof quote.profitMinor === 'number'
+                            ? formatStoredRate(quote.profitMinor, currency)
+                            : '—'}
+                    </dd>
+                </div>
+                <div>
+                    <dt className="text-muted-foreground">Customer paid (shipping)</dt>
+                    <dd className="font-medium">
+                        {typeof quote.priceMinor === 'number'
+                            ? formatStoredRate(quote.priceMinor, currency)
+                            : '—'}
+                    </dd>
+                </div>
+                <div>
+                    <dt className="text-muted-foreground">Captured at</dt>
+                    <dd>{quote.capturedAt ? formatWhen(quote.capturedAt) : '—'}</dd>
+                </div>
+            </dl>
+        </div>
+    );
+}
+
+function CarrierChoice({
+    order,
+    checkoutQuote,
+}: {
+    order: any;
+    checkoutQuote?: CheckoutQuoteSnapshot | null;
+}) {
     const choices = useQuery({
         queryKey: ['bolesaOrderCarrierChoices', order?.id],
         enabled: Boolean(order?.id),
@@ -740,13 +883,25 @@ function CarrierChoice({ order }: { order: any }) {
     });
     const paymentLabel = choices.data?.paymentPreference === 'cod' ? 'cash on delivery' : 'card';
     const rows = choices.data?.choices ?? [];
+    const snapshot =
+        checkoutQuote ?? parseCheckoutQuote(order?.customFields?.bolesaQuote);
     return (
         <div className="space-y-2 rounded-md border p-3">
-            <div className="font-medium">Carrier</div>
+            <div className="font-medium">Carrier for AWB</div>
             <p className="text-xs text-muted-foreground">
-                Prices come from the carrier for {paymentLabel}, plus the profit saved in Bolesa Connection.
-                The customer was already charged for shipping. This choice only selects who creates the AWB.
+                Live Partner prices for {paymentLabel} plus current Connection profit.
+                The checkout snapshot above stays frozen. Changing the carrier here only
+                picks who creates the AWB — it does not re-bill the customer.
             </p>
+            {snapshot?.serviceSlug && (
+                <p className="text-xs">
+                    Checkout chose <span className="font-mono">{snapshot.serviceSlug}</span>
+                    {typeof snapshot.profitMinor === 'number'
+                        ? ` with profit ${formatStoredRate(snapshot.profitMinor, snapshot.currencyCode || 'EGP')}`
+                        : ''}
+                    .
+                </p>
+            )}
             {choices.isLoading && <p className="text-sm text-muted-foreground">Loading carrier prices…</p>}
             {choices.error && <p className="text-sm text-destructive">{(choices.error as Error).message}</p>}
             {!choices.isLoading && !choices.error && rows.length === 0 && (
@@ -774,6 +929,7 @@ function CarrierChoice({ order }: { order: any }) {
 
 function BolesaShipmentBlock({ context }: { context: { entity?: any } }) {
     const order = context.entity;
+    const checkoutQuote = useCheckoutQuote(order);
     const fulfillments = order?.fulfillments ?? [];
     const bolesa = fulfillments.filter(
         (f: any) =>
@@ -783,7 +939,8 @@ function BolesaShipmentBlock({ context }: { context: { entity?: any } }) {
     );
     return (
         <div className="space-y-4">
-            <CarrierChoice order={order} />
+            <CheckoutShippingSnapshot quote={checkoutQuote.data} isLoading={checkoutQuote.isLoading} />
+            <CarrierChoice order={order} checkoutQuote={checkoutQuote.data} />
             {bolesa.length === 0 ? (
                 <div className="text-sm text-muted-foreground">
                     Payment does not create a shipment. Choose a carrier, then use

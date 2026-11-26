@@ -691,27 +691,36 @@ export class BolesaShipmentService implements OnModuleInit {
             return;
         }
         const preference = ((order as any).customFields?.paymentPreference ?? 'prepaid') as PaymentPreference;
+        const existingSlug = String((order as any).customFields?.bolesaServiceSlug ?? '').trim();
         const chargedMinor = order.shippingLines?.[0]?.priceWithTax;
         let quoteBody: Record<string, unknown> | undefined;
+        let selectedSlug = existingSlug;
         try {
             const services = await this.rateService.getOptionsForOrder(ctx, order, preference);
             const conn = await this.connectionService.requireActive(ctx);
+            const offers = normalizeServiceOffers(conn.serviceOffers);
             const quoted = quoteCustomerShipping({
                 services,
                 enabledSlugs: merchantServiceSlugs(conn.enabledServiceSlugs),
-                offers: normalizeServiceOffers(conn.serviceOffers),
+                offers,
                 preference,
                 currencyCode: ctx.channel.defaultCurrencyCode,
             });
             if (quoted) {
                 const option = services.find(service => service.slug === quoted.slug);
+                const offer = offers.find(row => row.slug === quoted.slug);
                 const frozen = chargedShippingQuote({ quoted, chargedMinor });
+                // Freeze company + profit at checkout so later Connection edits do not rewrite history.
                 quoteBody = {
                     ...frozen,
-                    carrierName: option?.carrierName,
+                    carrierName: option?.carrierName ?? quoted.slug,
+                    priority: offer?.priority ?? 100,
                     paymentPreference: preference,
                     capturedAt: new Date().toISOString(),
                 };
+                if (!selectedSlug) {
+                    selectedSlug = quoted.slug;
+                }
             }
         } catch (err: any) {
             Logger.warn(
@@ -721,7 +730,7 @@ export class BolesaShipmentService implements OnModuleInit {
         }
         if (!quoteBody && typeof chargedMinor === 'number') {
             quoteBody = {
-                serviceSlug: '',
+                serviceSlug: selectedSlug,
                 priceMinor: chargedMinor,
                 currencyCode: order.currencyCode,
                 paymentPreference: preference,
@@ -735,6 +744,8 @@ export class BolesaShipmentService implements OnModuleInit {
             customFields: {
                 ...(order.customFields as any),
                 bolesaQuote: JSON.stringify(quoteBody),
+                // Snapshot the priority-winning carrier so AWB / admin UI know what checkout used.
+                ...(selectedSlug ? { bolesaServiceSlug: selectedSlug } : {}),
             },
         } as any);
     }
