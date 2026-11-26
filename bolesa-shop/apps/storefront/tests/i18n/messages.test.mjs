@@ -68,15 +68,23 @@ test('message keys match across locales', async () => {
     const discovered = await findMessageFiles(path.join(root, 'src'));
     const englishFiles = discovered.filter(file => path.basename(file) === 'en.json');
     for (const englishFile of englishFiles) {
-        const germanFile = path.join(path.dirname(englishFile), 'de.json');
-        assert.ok(discovered.includes(germanFile), `${englishFile} has no matching de.json file.`);
         const english = JSON.parse(await readFile(path.join(root, englishFile), 'utf8'));
-        const german = JSON.parse(await readFile(path.join(root, germanFile), 'utf8'));
-        assert.deepEqual(
-            messageKeys(german).sort(),
-            messageKeys(english).sort(),
-            `${englishFile} and ${germanFile} must define the same message keys.`,
+        const englishKeys = messageKeys(english).sort();
+        const siblings = discovered.filter(
+            file =>
+                path.dirname(file) === path.dirname(englishFile) &&
+                path.basename(file) !== 'en.json',
         );
+        assert.ok(siblings.length > 0, `${englishFile} has no sibling locale files.`);
+        for (const siblingFile of siblings) {
+            assert.ok(discovered.includes(siblingFile), `${englishFile} has no matching ${siblingFile}.`);
+            const sibling = JSON.parse(await readFile(path.join(root, siblingFile), 'utf8'));
+            assert.deepEqual(
+                messageKeys(sibling).sort(),
+                englishKeys,
+                `${englishFile} and ${siblingFile} must define the same message keys.`,
+            );
+        }
     }
 });
 

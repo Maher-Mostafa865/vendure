@@ -1,0 +1,19 @@
+{
+  "Navigation": {
+    "openMenu": "فتح القائمة",
+    "menu": "القائمة",
+    "searchProducts": "ابحث عن المنتجات...",
+    "shopAll": "تسوق الكل",
+    "collections": "المجموعات",
+    "account": "الحساب",
+    "profile": "الملف الشخصي",
+    "orders": "الطلبات",
+    "addresses": "العناوين",
+    "signIn": "تسجيل الدخول",
+    "signOut": "تسجيل الخروج",
+    "greeting": "مرحبًا، {name}",
+    "shoppingCart": "سلة التسوق",
+    "switchLanguage": "تغيير اللغة",
+    "switchCurrency": "تغيير العملة"
+  }
+}

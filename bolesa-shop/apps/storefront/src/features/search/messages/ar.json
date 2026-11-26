@@ -1,0 +1,22 @@
+{
+  "Sort": {
+    "nameAsc": "الاسم: من أ إلى ي",
+    "nameDesc": "الاسم: من ي إلى أ",
+    "priceAsc": "السعر: من الأقل إلى الأعلى",
+    "priceDesc": "السعر: من الأعلى إلى الأقل",
+    "placeholder": "ترتيب حسب"
+  },
+  "Filters": {
+    "title": "عوامل التصفية",
+    "clearAll": "مسح الكل",
+    "filtersButton": "عوامل التصفية"
+  },
+  "Search": {
+    "title": "بحث",
+    "pageTitle": "البحث عن المنتجات",
+    "resultsFor": "نتائج البحث عن \"{query}\"",
+    "resultsTitle": "نتائج البحث عن \"{query}\"",
+    "metaDescription": "اعثر على منتجات تطابق \"{query}\" في {siteName}",
+    "metaCatalogDescription": "ابحث في كتالوج منتجاتنا في {siteName}"
+  }
+}

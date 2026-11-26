@@ -1,0 +1,22 @@
+{
+  "Cart": {
+    "title": "سلة التسوق",
+    "empty": "سلتك فارغة",
+    "emptyMessage": "أضف بعض المنتجات إلى سلتك للبدء",
+    "continueShopping": "متابعة التسوق",
+    "each": "للقطعة",
+    "orderSummary": "ملخص الطلب",
+    "subtotal": "المجموع الفرعي",
+    "shipping": "الشحن",
+    "calculatedAtCheckout": "يُحسب عند الدفع",
+    "total": "الإجمالي",
+    "proceedToCheckout": "إتمام الشراء",
+    "secureCheckout": "دفع آمن",
+    "promotionCode": "رمز الخصم",
+    "enterDiscountCode": "أدخل رمز الخصم أدناه",
+    "remove": "إزالة",
+    "enterCode": "أدخل الرمز",
+    "apply": "تطبيق",
+    "sku": "رمز المنتج: {sku}"
+  }
+}

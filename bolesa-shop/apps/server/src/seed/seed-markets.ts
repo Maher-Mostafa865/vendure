@@ -149,7 +149,7 @@ async function seedEgyptDefaultChannel(
     const updated = await channelService.update(ctx, {
         id: ctx.channelId,
         defaultLanguageCode: LanguageCode.en,
-        availableLanguageCodes: [LanguageCode.en],
+        availableLanguageCodes: [LanguageCode.en, LanguageCode.ar, LanguageCode.de],
         defaultCurrencyCode: CurrencyCode.EGP,
         // Egypt channel is EGP-only so the storefront cannot keep a USD cart by mistake.
         availableCurrencyCodes: [CurrencyCode.EGP],
@@ -177,6 +177,7 @@ async function seedSaudiChannel(app: INestApplicationContext, ctx: RequestContex
     if (existing) {
         const updated = await channelService.update(ctx, {
             id: existing.id,
+            availableLanguageCodes: [LanguageCode.en, LanguageCode.ar, LanguageCode.de],
             defaultCurrencyCode: CurrencyCode.SAR,
             availableCurrencyCodes: [CurrencyCode.SAR],
             defaultTaxZoneId: middleEast.id,
@@ -194,7 +195,7 @@ async function seedSaudiChannel(app: INestApplicationContext, ctx: RequestContex
         code: SAUDI_CHANNEL_CODE,
         token: SAUDI_CHANNEL_TOKEN,
         defaultLanguageCode: LanguageCode.en,
-        availableLanguageCodes: [LanguageCode.en],
+        availableLanguageCodes: [LanguageCode.en, LanguageCode.ar, LanguageCode.de],
         defaultCurrencyCode: CurrencyCode.SAR,
         availableCurrencyCodes: [CurrencyCode.SAR],
         pricesIncludeTax: false,

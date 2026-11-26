@@ -1,0 +1,25 @@
+{
+  "OrderStatus": {
+    "AddingItems": "إضافة منتجات",
+    "ArrangingPayment": "ترتيب الدفع",
+    "PaymentAuthorized": "تم اعتماد الدفع",
+    "PaymentSettled": "تم تسوية الدفع",
+    "PartiallyShipped": "شُحن جزئيًا",
+    "Shipped": "تم الشحن",
+    "PartiallyDelivered": "تم التسليم جزئيًا",
+    "Delivered": "تم التسليم",
+    "Cancelled": "ملغى"
+  },
+  "OrderConfirmation": {
+    "pageTitle": "تأكيد الطلب",
+    "orderConfirmed": "تم تأكيد الطلب!",
+    "thankYou": "شكرًا لطلبك. رقم طلبك هو",
+    "emailConfirmation": "سنرسل إليك بريدًا إلكترونيًا يتضمن تفاصيل طلبك ومعلومات التتبع.",
+    "orderSummary": "ملخص الطلب",
+    "qty": "الكمية: {quantity}",
+    "total": "الإجمالي",
+    "shippingAddress": "عنوان الشحن",
+    "continueShopping": "متابعة التسوق",
+    "viewOrders": "عرض الطلبات"
+  }
+}

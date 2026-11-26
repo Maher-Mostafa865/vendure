@@ -1,0 +1,23 @@
+{
+  "NotFound": {
+    "title": "الصفحة غير موجودة",
+    "message": "الصفحة التي تبحث عنها غير موجودة أو تم نقلها أو غير متاحة مؤقتًا.",
+    "goHome": "الانتقال إلى الرئيسية",
+    "browseProducts": "تصفح المنتجات",
+    "popularCollections": "المجموعات الشائعة"
+  },
+  "Footer": {
+    "description": "متجر إلكتروني حديث مبني على Vendure و Next.js. سريع ومرن وجاهز للإنتاج.",
+    "categories": "الفئات",
+    "customer": "العميل",
+    "shopAll": "تسوق الكل",
+    "orders": "الطلبات",
+    "account": "الحساب",
+    "vendure": "Vendure",
+    "github": "GitHub",
+    "documentation": "التوثيق",
+    "sourceCode": "الكود المصدري",
+    "copyright": "Vendure Store. جميع الحقوق محفوظة.",
+    "poweredBy": "مدعوم بواسطة"
+  }
+}

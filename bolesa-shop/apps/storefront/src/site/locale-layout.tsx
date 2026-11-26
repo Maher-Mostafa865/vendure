@@ -1,10 +1,10 @@
 import type {Metadata, Viewport} from "next";
 import {locale as rootLocale} from "next/root-params";
 import {hasLocale, NextIntlClientProvider} from "next-intl";
-import {Geist, Geist_Mono} from "next/font/google";
+import {Geist, Geist_Mono, Noto_Sans_Arabic} from "next/font/google";
 import {getMessages, getTranslations, setRequestLocale} from "next-intl/server";
 import {notFound} from "next/navigation";
-import {routing} from "@/platform/i18n/routing";
+import {isRtlLocale, routing} from "@/platform/i18n/routing";
 import {toOgLocale} from "@/platform/i18n/locale-utils";
 import {getRouteLocale} from "@/platform/i18n/server";
 import {Toaster} from "@/components/ui/sonner";
@@ -21,6 +21,12 @@ const geistSans = Geist({
 const geistMono = Geist_Mono({
     variable: "--font-geist-mono",
     subsets: ["latin"],
+});
+
+const notoArabic = Noto_Sans_Arabic({
+    variable: "--font-arabic",
+    subsets: ["arabic"],
+    weight: ["400", "500", "600", "700"],
 });
 
 export function generateStaticParams() {
@@ -85,11 +91,12 @@ export default async function LocaleLayout({children}: {children: React.ReactNod
 
     setRequestLocale(locale);
     const messages = await getMessages({locale});
+    const dir = isRtlLocale(locale) ? 'rtl' : 'ltr';
 
     return (
-        <html lang={locale} data-scroll-behavior="smooth" suppressHydrationWarning>
+        <html lang={locale} dir={dir} data-scroll-behavior="smooth" suppressHydrationWarning>
             <body
-                className={`${geistSans.variable} ${geistMono.variable} antialiased flex flex-col min-h-screen`}
+                className={`${geistSans.variable} ${geistMono.variable} ${notoArabic.variable} antialiased flex flex-col min-h-screen ${isRtlLocale(locale) ? 'font-[family-name:var(--font-arabic)]' : ''}`}
             >
                 <NextIntlClientProvider locale={locale} messages={messages}>
                     <ThemeProvider>

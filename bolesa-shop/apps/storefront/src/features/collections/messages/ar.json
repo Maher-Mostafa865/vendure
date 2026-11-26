@@ -1,0 +1,7 @@
+{
+  "Collection": {
+    "home": "الرئيسية",
+    "collectionNotFound": "المجموعة غير موجودة",
+    "browseCollectionAt": "تصفح مجموعة {name} في {siteName}"
+  }
+}
