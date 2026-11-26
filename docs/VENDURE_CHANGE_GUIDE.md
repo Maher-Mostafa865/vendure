@@ -560,6 +560,7 @@ Core e2e databases are SQLite files under `packages/<name>/e2e/__data__/`. Root 
 | AWB payload | `plugins/bolesa/util/awb-content.ts` and `bolesa-shipment.service.ts` | `npm run test:bolesa`, then sandbox e2e if Partner behavior matters |
 | COD vs prepaid timing | `plugins/bolesa/util/payment-kind.ts` | `payment-kind.spec.ts` |
 | A new card gateway | New `PaymentMethodHandler` in a shop plugin | Not present today; do not extend `dummy-payment-handler` for production |
+| Seed EG/SA COD + Paymob | `apps/server/src/seed/seed-markets.ts` (`npm run seed:markets`) | Admin payment methods `bolesa-cod` + `paymob` on both channels |
 | A core service bug | `packages/core/src/service/services/<name>.service.ts` | Package `npm test`, then section 7 before expecting the shop to change |
 | Customer login UI | `apps/storefront/src/features/authentication/` | `npm run check-types` in the storefront. `npm run test` does not cover this screen |
 | Order state machine | `packages/core/src/service/services/order.service.ts` | Core e2e, then section 7 |

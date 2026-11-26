@@ -7,7 +7,8 @@ import { dummyPaymentHandler, InitialData } from '@vendure/core';
  */
 export const initialData: InitialData = {
     defaultLanguage: LanguageCode.en,
-    defaultZone: 'Europe',
+    // Default channel is Egypt-first; Saudi is added by seed:markets.
+    defaultZone: 'Africa',
     roles: [],
     taxRates: [
         { name: 'Standard Tax', percentage: 20 },
@@ -49,6 +50,7 @@ export const initialData: InitialData = {
     ],
     countries: [
         { name: 'Egypt', code: 'EG', zone: 'Africa' },
+        { name: 'Saudi Arabia', code: 'SA', zone: 'Middle East' },
         { name: 'United States of America', code: 'US', zone: 'Americas' },
         { name: 'United Kingdom', code: 'GB', zone: 'Europe' },
         { name: 'Germany', code: 'DE', zone: 'Europe' },

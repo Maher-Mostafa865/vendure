@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "postinstall": "node scripts/link-nestjs-for-nestlens.js",
     "dev": "concurrently -n server,storefront -c blue,magenta \"npm run dev -w server\" \"npm run dev -w storefront\"",
     "dev:server": "npm run dev:server -w server",
     "dev:worker": "npm run dev:worker -w server",
@@ -26,8 +27,12 @@
     "apps/*"
   ],
   "overrides": {
-    "@nestjs/common": "$@nestjs/common",
-    "@nestjs/core": "$@nestjs/core"
+    "@nestjs/common": "12.5.1",
+    "@nestjs/core": "12.5.1",
+    "nestlens": {
+      "@nestjs/common": "12.5.1",
+      "@nestjs/core": "12.5.1"
+    }
   },
   "allowScripts": {
     "bcrypt": true,

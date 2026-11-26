@@ -14,6 +14,7 @@ import { bootstrap, JobQueueService, Logger, mergeConfig } from '@vendure/core';
 import { populate } from '@vendure/core/cli';
 
 import { initialData } from './initial-data';
+import { seedMarkets } from './seed/seed-markets';
 import { config } from './vendure-config';
 
 const mockDataRoot = path.resolve(__dirname, '../../../../packages/core/mock-data');
@@ -40,6 +41,8 @@ populate(
     productsCsv,
 )
     .then(async app => {
+        Logger.info('Catalog populated — seeding EG/SA markets (Bolesa + Paymob)');
+        await seedMarkets(app);
         Logger.info('Populate finished — closing app');
         await app.close();
         process.exit(0);

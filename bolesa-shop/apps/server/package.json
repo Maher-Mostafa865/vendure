@@ -21,7 +21,8 @@
     "test:bolesa:sandbox-e2e": "BOLESA_SANDBOX_E2E=1 TS_NODE_PROJECT=tsconfig.integration.json node -r reflect-metadata -r ts-node/register --test --test-concurrency=1 --test-timeout=300000 src/plugins/bolesa/tests/integration/sandbox-e2e.integration.spec.ts src/plugins/bolesa/tests/integration/full-flow-e2e.integration.spec.ts",
     "test:bolesa:remote-sandbox-e2e": "BOLESA_REMOTE_SANDBOX_E2E=1 TS_NODE_PROJECT=tsconfig.integration.json node -r reflect-metadata -r ts-node/register --test --test-concurrency=1 --test-timeout=300000 src/plugins/bolesa/tests/integration/remote-sandbox-e2e.integration.spec.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "populate": "PORT=3999 node -r reflect-metadata -r ts-node/register src/populate.ts"
+    "populate": "PORT=3999 node -r reflect-metadata -r ts-node/register src/populate.ts",
+    "seed:markets": "PORT=3999 node -r reflect-metadata -r ts-node/register src/seed-markets.ts"
   },
   "dependencies": {
     "@vendure/asset-server-plugin": "3.8.2",
