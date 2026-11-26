@@ -195,6 +195,13 @@ const DEFAULT_CHECKOUT_POLICY: BolesaCheckoutPolicy = {
     codPaymentMethodCodes: ['cashOndelivery-bolesa-egy', 'bolesa-cod'],
 };
 
+/** Shop-standard COD (not Bolesa). Still sets order paymentPreference=cod at checkout. */
+const STANDARD_COD_METHOD_CODES = new Set(['standard-cod']);
+
+function isCodPaymentMethodCode(methodCode: string, policy: BolesaCheckoutPolicy): boolean {
+    return policy.codPaymentMethodCodes.includes(methodCode) || STANDARD_COD_METHOD_CODES.has(methodCode);
+}
+
 export async function getBolesaCheckoutPolicy(): Promise<BolesaCheckoutPolicy> {
     try {
         const data = await shopRawQuery<{
@@ -221,7 +228,7 @@ export async function getBolesaCheckoutPolicy(): Promise<BolesaCheckoutPolicy> {
 
 export async function selectPaymentPreference(methodCode: string) {
     const policy = await getBolesaCheckoutPolicy();
-    const preference = policy.codPaymentMethodCodes.includes(methodCode) ? 'cod' : 'prepaid';
+    const preference = isCodPaymentMethodCode(methodCode, policy) ? 'cod' : 'prepaid';
     const data = await shopRawQuery<{
         setOrderCustomFields: { __typename: string; errorCode?: string; message?: string };
     }>(

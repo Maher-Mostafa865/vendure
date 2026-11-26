@@ -21,6 +21,7 @@ import {
     ZoneService,
 } from '@vendure/core';
 
+import { STANDARD_COD_HANDLER_CODE } from '../config/standard-cod-payment-handler';
 import {
     BOLESA_COD_HANDLER_CODE,
     BOLESA_ELIGIBILITY_CHECKER_CODE,
@@ -38,6 +39,8 @@ const EG_SHIPPER_HASH = '4c2279956e07a68e2eacaeb97382d3e5';
 
 /** Storefront / checkout payment + shipping method codes. */
 export const COD_PAYMENT_METHOD_CODE = 'bolesa-cod';
+/** Shop-standard COD — not tied to Bolesa AWB / carrier COD. */
+export const STANDARD_COD_PAYMENT_METHOD_CODE = 'standard-cod';
 export const PAYMOB_PAYMENT_METHOD_CODE = 'paymob';
 export const BOLESA_SHIPPING_METHOD_CODE = 'bolesa-shipping';
 
@@ -394,29 +397,40 @@ async function seedCheckoutMethods(
         code: string;
         name: string;
         description: string;
+        nameAr?: string;
+        descriptionAr?: string;
         handlerCode: string;
-        checkerCode: string;
+        checkerCode?: string;
         checkerArgs?: Array<{ name: string; value: string }>;
     }) => {
         const all = await paymentMethodService.findAll(ctx, { take: 100 });
         const existing = all.items.find(p => p.code === input.code);
+        const checker = input.checkerCode
+            ? {
+                  code: input.checkerCode,
+                  arguments: input.checkerArgs ?? [],
+              }
+            : undefined;
+        const translations = [
+            {
+                languageCode: LanguageCode.en,
+                name: input.name,
+                description: input.description,
+            },
+            {
+                languageCode: LanguageCode.ar,
+                name: input.nameAr ?? input.name,
+                description: input.descriptionAr ?? input.description,
+            },
+        ];
         let id: ID;
         if (existing) {
             const updated = await paymentMethodService.update(ctx, {
                 id: existing.id,
                 enabled: true,
                 handler: { code: input.handlerCode, arguments: [] },
-                checker: {
-                    code: input.checkerCode,
-                    arguments: input.checkerArgs ?? [],
-                },
-                translations: [
-                    {
-                        languageCode: LanguageCode.en,
-                        name: input.name,
-                        description: input.description,
-                    },
-                ],
+                checker,
+                translations,
             });
             id = updated.id;
         } else {
@@ -424,17 +438,8 @@ async function seedCheckoutMethods(
                 code: input.code,
                 enabled: true,
                 handler: { code: input.handlerCode, arguments: [] },
-                checker: {
-                    code: input.checkerCode,
-                    arguments: input.checkerArgs ?? [],
-                },
-                translations: [
-                    {
-                        languageCode: LanguageCode.en,
-                        name: input.name,
-                        description: input.description,
-                    },
-                ],
+                checker,
+                translations,
             });
             id = created.id;
         }
@@ -443,9 +448,19 @@ async function seedCheckoutMethods(
     };
 
     await ensurePayment({
-        code: COD_PAYMENT_METHOD_CODE,
+        code: STANDARD_COD_PAYMENT_METHOD_CODE,
         name: 'Cash on delivery',
-        description: 'Pay the courier when your order arrives.',
+        description: 'Pay when your order is delivered. Standard shop COD (not Bolesa).',
+        nameAr: 'الدفع عند الاستلام',
+        descriptionAr: 'ادفع عند استلام الطلب. دفع عند الاستلام العادي (ليس عبر بوليسيا).',
+        handlerCode: STANDARD_COD_HANDLER_CODE,
+    });
+    await ensurePayment({
+        code: COD_PAYMENT_METHOD_CODE,
+        name: 'Cash on delivery (Bolesa)',
+        description: 'Pay the Bolesa courier when your order arrives.',
+        nameAr: 'الدفع عند الاستلام (بوليسيا)',
+        descriptionAr: 'ادفع لمندوب بوليسيا عند وصول الطلب.',
         handlerCode: BOLESA_COD_HANDLER_CODE,
         checkerCode: 'bolesa-cod-eligibility',
         checkerArgs: [{ name: 'orderMinimum', value: '0' }],
@@ -454,6 +469,8 @@ async function seedCheckoutMethods(
         code: PAYMOB_PAYMENT_METHOD_CODE,
         name: 'Pay with card (Paymob)',
         description: 'Pay securely by card via Paymob.',
+        nameAr: 'الدفع بالبطاقة (Paymob)',
+        descriptionAr: 'ادفع بأمان بالبطاقة عبر Paymob.',
         handlerCode: PAYMOB_HANDLER_CODE,
         checkerCode: PAYMOB_ELIGIBILITY_CHECKER_CODE,
     });
@@ -503,7 +520,7 @@ async function seedCheckoutMethods(
     await channelService.assignToChannels(ctx, ShippingMethod, shippingId, channelIds);
 
     Logger.info(
-        `Checkout methods ready on ${channelIds.length} channel(s): ${COD_PAYMENT_METHOD_CODE}, ${PAYMOB_PAYMENT_METHOD_CODE}, ${BOLESA_SHIPPING_METHOD_CODE}`,
+        `Checkout methods ready on ${channelIds.length} channel(s): ${STANDARD_COD_PAYMENT_METHOD_CODE}, ${COD_PAYMENT_METHOD_CODE}, ${PAYMOB_PAYMENT_METHOD_CODE}, ${BOLESA_SHIPPING_METHOD_CODE}`,
         loggerCtx,
     );
 }

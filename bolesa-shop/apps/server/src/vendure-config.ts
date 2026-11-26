@@ -12,6 +12,7 @@ import { DashboardPlugin } from '@vendure/dashboard/plugin';
 import { GraphiqlPlugin } from '@vendure/graphiql-plugin';
 import 'dotenv/config';
 import path from 'path';
+import { standardCodPaymentHandler } from './config/standard-cod-payment-handler';
 import { BolesaPlugin } from './plugins/bolesa';
 import { NestLensDevPlugin } from './plugins/nestlens/nestlens.plugin';
 import { PaymobPlugin } from './plugins/paymob';
@@ -70,7 +71,7 @@ export const config: VendureConfig = {
         password: process.env.DB_PASSWORD,
     },
     paymentOptions: {
-        paymentMethodHandlers: [dummyPaymentHandler],
+        paymentMethodHandlers: [dummyPaymentHandler, standardCodPaymentHandler],
     },
     systemOptions: {
         encryptionStrategy: new DefaultEncryptionStrategy({
